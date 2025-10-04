@@ -1,0 +1,54 @@
+name: X → Telegram
+
+on:
+  schedule:
+    # Every 30 minutes (GitHub cron uses UTC)
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}  # allow manual runs from the Actions tab
+
+permissions:
+  contents: write  # needed to push the state file back to the repo
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install deps
+        run: |
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+
+      - name: Run once
+        env:
+          X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python x_to_telegram.py --once --max-per-run 50
+
+      - name: Commit last_tweet_id.json if changed
+        if: always()
+        run: |
+          if [ -f last_tweet_id.json ]; then
+            if [ -n "$(git status --porcelain last_tweet_id.json)" ]; then
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              git add last_tweet_id.json
+              git commit -m "chore: update last_tweet_id.json [skip ci]" || echo "No changes"
+              git push
+            else
+              echo "No state changes."
+            fi
+          else
+            echo "No state file present; nothing to commit."
+          fi
