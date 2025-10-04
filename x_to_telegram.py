@@ -10,10 +10,8 @@ Env (.env or environment):
   TELEGRAM_BOT_TOKEN=1234567890:ABCDEF...
   TELEGRAM_CHAT_ID=@your_channel   # or -1001234567890
 
-Usage examples:
-  python x_to_telegram.py --once
-  python x_to_telegram.py --interval 900
-  python x_to_telegram.py --username joecarlsonshow --once --dry-run
+Typical GitHub Actions step:
+  python x_to_telegram.py --once --max-per-run 50
 """
 
 import argparse
@@ -26,15 +24,16 @@ from typing import List, Optional
 
 import requests
 import tweepy
+from tweepy.errors import TooManyRequests
 from dotenv import load_dotenv
 
 # -------------------------
-# Defaults (can be overridden via CLI)
+# Defaults (override via CLI)
 # -------------------------
 DEFAULT_USERNAME = "joecarlsonshow"
 DEFAULT_STATE_FILE = "last_tweet_id.json"
-DEFAULT_INTERVAL = 900  # seconds (15 min)
-DEFAULT_MAX_PER_RUN = 50  # extra safety even though we only request one page
+DEFAULT_INTERVAL = 900          # seconds (15 min) when looping locally
+DEFAULT_MAX_PER_RUN = 50        # safety cap (we request a single page anyway)
 
 # -------------------------
 # Utilities
@@ -69,7 +68,6 @@ def chunk_telegram_message(text: str, chunk_size: int = 4096) -> List[str]:
     start = 0
     while start < len(text):
         end = min(start + chunk_size, len(text))
-        # try not to split mid-line
         cut = text.rfind("\n", start, end)
         if cut == -1 or cut <= start:
             cut = end
@@ -82,7 +80,7 @@ def build_message(username: str, tweet: tweepy.Tweet) -> str:
     tweet_url = f"https://x.com/{username}/status/{tweet.id}"
     text = (tweet.text or "").strip()
 
-    # Extract expanded URLs if available (optional)
+    # Extract expanded URLs if available
     urls = []
     if tweet.entities and "urls" in tweet.entities:
         for u in tweet.entities["urls"]:
@@ -125,7 +123,8 @@ def x_client_from_env() -> tweepy.Client:
     bearer = os.getenv("X_BEARER_TOKEN")
     if not bearer:
         raise SystemExit("Missing X_BEARER_TOKEN. Set it in your environment or .env file.")
-    return tweepy.Client(bearer_token=bearer, wait_on_rate_limit=True)
+    # IMPORTANT: don't auto-sleep; fail fast on rate limit
+    return tweepy.Client(bearer_token=bearer, wait_on_rate_limit=False)
 
 def get_user_id(client: tweepy.Client, username: str) -> str:
     resp = client.get_user(username=username)
@@ -142,8 +141,9 @@ def fetch_new_tweets(
     max_per_run: int,
 ):
     """
-    Fetch up to one page from the user's timeline (newest first).
+    Fetch a single page from the user's timeline (newest first).
     We sort ascending so we can post oldest -> newest.
+    Only ONE API call per run to avoid hitting quotas.
     """
     exclude = []
     if not include_retweets:
@@ -151,19 +151,13 @@ def fetch_new_tweets(
     if not include_replies:
         exclude.append("replies")
 
-    try:
-        resp = client.get_users_tweets(
-            id=user_id,
-            since_id=since_id,
-            max_results=min(100, max_per_run),
-            tweet_fields=["created_at", "entities"],
-            exclude=exclude or None,
-        )
-    except tweepy.TooManyRequests as e:
-        # Tweepy will usually sleep if wait_on_rate_limit=True, but we handle anyway.
-        err("[x] Rate limit hit on get_users_tweets; backing off 900s.")
-        time.sleep(900)
-        return []
+    resp = client.get_users_tweets(
+        id=user_id,
+        since_id=since_id,
+        max_results=min(100, max_per_run),
+        tweet_fields=["created_at", "entities"],
+        exclude=exclude or None,
+    )
 
     tweets = list(resp.data or [])
     tweets.sort(key=lambda t: int(t.id))  # oldest -> newest
@@ -189,14 +183,19 @@ def run_once(
     state = load_state(state_file)
     last_id = state.get("last_id")
 
-    tweets = fetch_new_tweets(
-        client=client,
-        user_id=user_id,
-        since_id=last_id,
-        include_retweets=include_retweets,
-        include_replies=include_replies,
-        max_per_run=max_per_run,
-    )
+    try:
+        tweets = fetch_new_tweets(
+            client=client,
+            user_id=user_id,
+            since_id=last_id,
+            include_retweets=include_retweets,
+            include_replies=include_replies,
+            max_per_run=max_per_run,
+        )
+    except TooManyRequests:
+        # Fail fast so CI runners don't sit idle for ~10 minutes
+        log("[warning] X API rate limit reached — skipping this run.")
+        return last_id
 
     if not tweets:
         log("[info] No new tweets.")
@@ -237,20 +236,24 @@ def main():
         raise SystemExit("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID. Set them in your environment or .env file.")
 
     if args.once:
-        run_once(
-            username=args.username,
-            state_file=args.state_file,
-            telegram_token=tg_token,
-            telegram_chat_id=tg_chat,
-            include_retweets=args.include_retweets,
-            include_replies=args.include_replies,
-            max_per_run=max(1, args.max_per_run),
-            disable_preview=args.disable_preview,
-            dry_run=args.dry_run,
-        )
+        try:
+            run_once(
+                username=args.username,
+                state_file=args.state_file,
+                telegram_token=tg_token,
+                telegram_chat_id=tg_chat,
+                include_retweets=args.include_retweets,
+                include_replies=args.include_replies,
+                max_per_run=max(1, args.max_per_run),
+                disable_preview=args.disable_preview,
+                dry_run=args.dry_run,
+            )
+        except TooManyRequests:
+            log("[warning] Rate limited at top-level — exiting early.")
+            sys.exit(0)
         return
 
-    # Looping (daemon-ish)
+    # Looping (useful if you run it on your own machine; for Actions use --once)
     log(f"[start] Polling @{args.username} every {args.interval}s. Press Ctrl+C to stop.")
     while True:
         try:
@@ -265,9 +268,9 @@ def main():
                 disable_preview=args.disable_preview,
                 dry_run=args.dry_run,
             )
-        except tweepy.TooManyRequests:
-            err("[x] Rate limit raised at top level; sleeping 900s.")
-            time.sleep(900)
+        except TooManyRequests:
+            log("[warning] Rate limited in loop — sleeping 300s then continuing.")
+            time.sleep(300)
         except KeyboardInterrupt:
             log("\n[stop] Exiting by user request.")
             break
