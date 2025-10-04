@@ -1,0 +1,4 @@
+# never commit local env files or caches
+.env
+__pycache__/
+*.pyc
