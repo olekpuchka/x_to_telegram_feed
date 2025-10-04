@@ -3,7 +3,7 @@ name: X → Telegram
 on:
   schedule:
     # Every 30 minutes (GitHub cron uses UTC)
-    - cron: "*/30 * * * *"
+    - cron: "*/2 * * * *"
   workflow_dispatch: {}  # allow manual runs from the Actions tab
 
 permissions:
