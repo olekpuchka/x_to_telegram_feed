@@ -2,38 +2,66 @@ name: X → Telegram
 
 on:
   schedule:
-    # Every 30 minutes (GitHub cron uses UTC)
-    - cron: "*/2 * * * *"
-  workflow_dispatch: {}  # allow manual runs from the Actions tab
+    # Every 30 minutes (UTC)
+    - cron: "*/30 * * * *"
+  # Manual trigger from the Actions tab
+  workflow_dispatch: {}
 
+# Avoid overlapping runs if one is still in progress
+concurrency:
+  group: x-to-telegram
+  cancel-in-progress: true
+
+# Needed to push the updated last_tweet_id.json back to the repo
 permissions:
-  contents: write  # needed to push the state file back to the repo
+  contents: write
 
 jobs:
   run-script:
     runs-on: ubuntu-latest
+    # Keep the runner from idling too long; the script now exits fast on 429s
+    timeout-minutes: 5
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Show files (debug)
+        run: |
+          pwd
+          ls -la
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
+          # If you keep requirements at repo root, this speeds things up
+          cache-dependency-path: |
+            requirements.txt
+            **/requirements.txt
+            **/pyproject.toml
 
-      - name: Install deps
+      - name: Install dependencies
+        # Uses requirements.txt if present; otherwise falls back to inline install
         run: |
-            python -m pip install --upgrade pip
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
             pip install -r requirements.txt
+          else
+            pip install tweepy python-dotenv requests
+          fi
 
-      - name: Run once
+      - name: Run once (rate-limit safe)
         env:
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
+          # --once makes a single API call and exits.
+          # The script is set to fail fast on rate limits (no long sleeps).
           python x_to_telegram.py --once --max-per-run 50
 
       - name: Commit last_tweet_id.json if changed
@@ -44,7 +72,7 @@ jobs:
               git config user.name "github-actions[bot]"
               git config user.email "github-actions[bot]@users.noreply.github.com"
               git add last_tweet_id.json
-              git commit -m "chore: update last_tweet_id.json [skip ci]" || echo "No changes"
+              git commit -m "chore: update last_tweet_id.json [skip ci]" || true
               git push
             else
               echo "No state changes."
