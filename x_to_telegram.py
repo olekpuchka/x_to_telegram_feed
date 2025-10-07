@@ -79,22 +79,14 @@ def build_message(username: str, tweet: tweepy.Tweet) -> str:
     created_utc = tweet.created_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if tweet.created_at else "unknown time"
     tweet_url = f"https://x.com/{username}/status/{tweet.id}"
     text = (tweet.text or "").strip()
-
-    # Extract expanded URLs if available
-    urls = []
-    if tweet.entities and "urls" in tweet.entities:
-        for u in tweet.entities["urls"]:
-            urls.append(u.get("expanded_url") or u.get("url"))
-
+    # Only include the tweet text and a single link to the tweet itself.
+    # Previously we appended expanded URLs (e.g. pic.twitter.com links) which
+    # resulted in multiple links being posted for tweets with photos/videos.
     lines = [
         text,
         "",
-        tweet_url
+        tweet_url,
     ]
-    extras = [u for u in urls if u and u not in text]
-    if extras:
-        lines.append("")
-        lines.extend(extras)
 
     return "\n".join(lines).strip()
 
