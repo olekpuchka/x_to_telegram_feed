@@ -75,10 +75,30 @@ def chunk_telegram_message(text: str, chunk_size: int = 4096) -> List[str]:
         start = cut
     return chunks
 
+def extract_tweet_text(tweet: tweepy.Tweet) -> str:
+    """Return the full tweet text, including Blue long-form tweets."""
+    note_tweet = getattr(tweet, "note_tweet", None)
+    if isinstance(note_tweet, dict):
+        text = note_tweet.get("text")
+        if text:
+            return text.strip()
+
+    # Tweepy 4.14+ exposes raw data mapping on tweet.data
+    data = getattr(tweet, "data", None)
+    if isinstance(data, dict):
+        note = data.get("note_tweet")
+        if isinstance(note, dict):
+            text = note.get("text")
+            if text:
+                return text.strip()
+
+    return (getattr(tweet, "text", "") or "").strip()
+
+
 def build_message(username: str, tweet: tweepy.Tweet) -> str:
     created_utc = tweet.created_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if tweet.created_at else "unknown time"
     tweet_url = f"https://x.com/{username}/status/{tweet.id}"
-    text = (tweet.text or "").strip()
+    text = extract_tweet_text(tweet)
     # Only include the tweet text and a single link to the tweet itself.
     # Previously we appended expanded URLs (e.g. pic.twitter.com links) which
     # resulted in multiple links being posted for tweets with photos/videos.
@@ -147,7 +167,7 @@ def fetch_new_tweets(
         id=user_id,
         since_id=since_id,
         max_results=min(100, max_per_run),
-        tweet_fields=["created_at", "entities"],
+    tweet_fields=["created_at", "entities", "note_tweet"],
         exclude=exclude or None,
     )
 
