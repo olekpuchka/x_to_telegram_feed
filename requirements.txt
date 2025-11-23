@@ -1,4 +1,0 @@
-# requirements.txt
-tweepy
-python-dotenv
-requests
