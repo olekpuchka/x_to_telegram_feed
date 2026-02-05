@@ -2,6 +2,3 @@
 .env
 node_modules/
 .DS_Store
-
-# state file - keeps changing, no need to commit
-last_tweet_id.json
