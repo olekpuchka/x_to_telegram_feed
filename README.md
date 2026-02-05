@@ -71,8 +71,14 @@ Add these secrets to your repository at `Settings → Secrets and variables → 
 | `TELEGRAM_BOT_TOKEN` | Your Telegram bot token |
 | `TELEGRAM_CHAT_ID` | Your Telegram channel ID |
 | `STATE_GIST_ID` | The Gist ID from step 4 |
+| `GIST_TOKEN` | Personal Access Token with `gist` scope |
 
-Note: `GITHUB_TOKEN` is automatically available in Actions.
+**To create `GIST_TOKEN`:**
+1. Go to [GitHub Settings → Tokens](https://github.com/settings/tokens/new)
+2. Note: `X to Telegram Gist Access`
+3. Expiration: No expiration (or 1 year)
+4. Scopes: Check **`gist`** only
+5. Generate and copy the token
 
 ## Usage
 
