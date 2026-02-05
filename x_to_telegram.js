@@ -53,17 +53,21 @@ async function loadState(filePath) {
                 }
             });
             if (!response.ok) {
-                throw new Error(`GitHub API error: ${response.status}`);
+                throw new Error(`GitHub API error: ${response.status} - Gist not found or not accessible. Please verify STATE_GIST_ID secret is correct.`);
             }
             const gist = await response.json();
             const content = gist.files['state.json']?.content;
             if (content) {
-                return JSON.parse(content);
+                const state = JSON.parse(content);
+                log(`[state] Loaded from Gist: ${state.last_id || 'none'}`);
+                return state;
             }
+            log(`[state] Gist exists but state.json not found, starting fresh`);
+            return { last_id: null };
         } catch (e) {
-            err(`[state] Could not load from Gist: ${e.message}`);
+            err(`[state] CRITICAL: Could not load from Gist: ${e.message}`);
+            throw e; // Fail fast instead of silently continuing with null
         }
-        return { last_id: null };
     }
 
     // Fallback to local file for local development
@@ -98,12 +102,14 @@ async function saveState(filePath, lastId) {
                 })
             });
             if (!response.ok) {
-                throw new Error(`GitHub API error: ${response.status}`);
+                const errorText = await response.text();
+                throw new Error(`GitHub API error: ${response.status} - ${errorText}`);
             }
             log(`[state] Saved to Gist: ${lastId}`);
             return;
         } catch (e) {
-            err(`[state] Could not save to Gist: ${e.message}`);
+            err(`[state] CRITICAL: Could not save to Gist: ${e.message}`);
+            throw e; // Fail fast
         }
     }
 
