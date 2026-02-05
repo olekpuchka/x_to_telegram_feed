@@ -1,0 +1,51 @@
+name: X → Telegram
+
+on:
+  schedule:
+    # Every 30 minutes (UTC)
+    - cron: "*/30 * * * *"
+  # Manual trigger from the Actions tab
+  workflow_dispatch: {}
+
+# Avoid overlapping runs if one is still in progress
+concurrency:
+  group: x-to-telegram
+  cancel-in-progress: true
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+    # Keep the runner from idling too long; the script now exits fast on 429s
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Show files (debug)
+        run: |
+          pwd
+          ls -la
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run once (rate-limit safe)
+        env:
+          X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          STATE_GIST_ID: ${{ secrets.STATE_GIST_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # --once makes a single API call and exits.
+          # State is now persisted to GitHub Gist automatically
+          node x_to_telegram.js --once --max-per-run 50

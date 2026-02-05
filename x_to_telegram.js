@@ -40,16 +40,74 @@ function err(msg) {
 }
 
 async function loadState(filePath) {
+    const gistId = process.env.STATE_GIST_ID;
+    const githubToken = process.env.GITHUB_TOKEN;
+
+    // Use GitHub Gist if running in CI
+    if (gistId && githubToken) {
+        try {
+            const response = await fetch(`https://api.github.com/gists/${gistId}`, {
+                headers: {
+                    'Authorization': `token ${githubToken}`,
+                    'Accept': 'application/vnd.github.v3+json'
+                }
+            });
+            if (!response.ok) {
+                throw new Error(`GitHub API error: ${response.status}`);
+            }
+            const gist = await response.json();
+            const content = gist.files['state.json']?.content;
+            if (content) {
+                return JSON.parse(content);
+            }
+        } catch (e) {
+            err(`[state] Could not load from Gist: ${e.message}`);
+        }
+        return { last_id: null };
+    }
+
+    // Fallback to local file for local development
     try {
         const data = await fs.readFile(filePath, 'utf-8');
         return JSON.parse(data);
     } catch (e) {
-        // If file doesn't exist or is invalid, return default
         return { last_id: null };
     }
 }
 
 async function saveState(filePath, lastId) {
+    const gistId = process.env.STATE_GIST_ID;
+    const githubToken = process.env.GITHUB_TOKEN;
+
+    // Use GitHub Gist if running in CI
+    if (gistId && githubToken) {
+        try {
+            const response = await fetch(`https://api.github.com/gists/${gistId}`, {
+                method: 'PATCH',
+                headers: {
+                    'Authorization': `token ${githubToken}`,
+                    'Accept': 'application/vnd.github.v3+json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    files: {
+                        'state.json': {
+                            content: JSON.stringify({ last_id: lastId })
+                        }
+                    }
+                })
+            });
+            if (!response.ok) {
+                throw new Error(`GitHub API error: ${response.status}`);
+            }
+            log(`[state] Saved to Gist: ${lastId}`);
+            return;
+        } catch (e) {
+            err(`[state] Could not save to Gist: ${e.message}`);
+        }
+    }
+
+    // Fallback to local file for local development
     try {
         await fs.writeFile(filePath, JSON.stringify({ last_id: lastId }), 'utf-8');
     } catch (e) {
