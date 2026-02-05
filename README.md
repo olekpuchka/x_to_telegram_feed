@@ -186,7 +186,7 @@ node x_to_telegram.js --username nasa --once --max-per-run 1
 
 ## License
 
-ISC
+MIT
 
 ## Contributing
 
