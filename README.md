@@ -1,5 +1,8 @@
 # X to Telegram Feed
 
+![Workflow Status](https://github.com/olekpuchka/x_to_telegram_feed/workflows/X%20%E2%86%92%20Telegram/badge.svg)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Automatically forwards new posts from an X (Twitter) account to a Telegram channel.
 
 ## Features
