@@ -1,13 +1,18 @@
 {
   "name": "x_to_telegram_feed",
   "version": "1.0.0",
-  "description": "",
+  "description": "Automatically forwards new posts from an X (Twitter) account to a Telegram channel",
   "type": "module",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "main": "x_to_telegram.js",
+  "bin": {
+    "x-to-telegram": "./x_to_telegram.js"
   },
-  "keywords": [],
+  "scripts": {
+    "start": "node x_to_telegram.js",
+    "start:once": "node x_to_telegram.js --once",
+    "start:dev": "node x_to_telegram.js --interval 60"
+  },
+  "keywords": ["twitter", "x", "telegram", "bot", "automation", "feed"],
   "author": "",
   "license": "MIT",
   "dependencies": {
