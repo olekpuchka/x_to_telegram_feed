@@ -1,4 +1,2 @@
-# never commit local env files or caches
-.env
 node_modules/
 .DS_Store

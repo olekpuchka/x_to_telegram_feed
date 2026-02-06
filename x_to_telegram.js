@@ -4,17 +4,13 @@
  * Post new X (Twitter) posts from a user to a Telegram channel.
  *
  * Requirements:
- *   npm install twitter-api-v2 grammy dotenv yargs
+ *   npm install twitter-api-v2 grammy yargs
  *
- * Env (.env or environment):
- *   X_BEARER_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxx
- *   TELEGRAM_BOT_TOKEN=1234567890:ABCDEF...
- *   TELEGRAM_CHAT_ID=@your_channel   # or -1001234567890
+ * Environment variables (set via GitHub Secrets):
+ *   X_BEARER_TOKEN, X_USERNAME, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+ *   STATE_GIST_ID, GIST_TOKEN
  */
 
-import 'dotenv/config';
-import fs from 'fs/promises';
-import path from 'path';
 import { TwitterApi } from 'twitter-api-v2';
 import { Bot } from 'grammy';
 import yargs from 'yargs/yargs';
@@ -23,101 +19,87 @@ import { hideBin } from 'yargs/helpers';
 // -------------------------
 // Defaults
 // -------------------------
-const DEFAULT_USERNAME = "joecarlsonshow";
-const DEFAULT_STATE_FILE = "last_tweet_id.json";
-const DEFAULT_INTERVAL = 900; // seconds
 const DEFAULT_MAX_PER_RUN = 50;
 
 // -------------------------
 // Utilities
 // -------------------------
+function timestamp() {
+    return new Date().toISOString();
+}
+
 function log(msg) {
-    console.log(msg);
+    console.log(`${timestamp()} ${msg}`);
 }
 
 function err(msg) {
-    console.error(msg);
+    console.error(`${timestamp()} ${msg}`);
 }
 
-async function loadState(filePath) {
+function getGistCredentials() {
     const gistId = process.env.STATE_GIST_ID;
-    const githubToken = process.env.GITHUB_TOKEN;
-
-    // Use GitHub Gist if running in CI
-    if (gistId && githubToken) {
-        try {
-            const response = await fetch(`https://api.github.com/gists/${gistId}`, {
-                headers: {
-                    'Authorization': `token ${githubToken}`,
-                    'Accept': 'application/vnd.github.v3+json'
-                }
-            });
-            if (!response.ok) {
-                throw new Error(`GitHub API error: ${response.status} - Gist not found or not accessible. Please verify STATE_GIST_ID secret is correct.`);
-            }
-            const gist = await response.json();
-            const content = gist.files['state.json']?.content;
-            if (content) {
-                const state = JSON.parse(content);
-                log(`[state] Loaded from Gist: ${state.last_id || 'none'}`);
-                return state;
-            }
-            log(`[state] Gist exists but state.json not found, starting fresh`);
-            return { last_id: null };
-        } catch (e) {
-            err(`[state] CRITICAL: Could not load from Gist: ${e.message}`);
-            throw e; // Fail fast instead of silently continuing with null
-        }
+    const gistToken = process.env.GIST_TOKEN;
+    if (!gistId || !gistToken) {
+        throw new Error("Missing STATE_GIST_ID or GIST_TOKEN.");
     }
+    return { gistId, gistToken };
+}
 
-    // Fallback to local file for local development
+async function loadState() {
+    const { gistId, gistToken } = getGistCredentials();
+
     try {
-        const data = await fs.readFile(filePath, 'utf-8');
-        return JSON.parse(data);
+        const response = await fetch(`https://api.github.com/gists/${gistId}`, {
+            headers: {
+                'Authorization': `token ${gistToken}`,
+                'Accept': 'application/vnd.github.v3+json'
+            }
+        });
+        if (!response.ok) {
+            throw new Error(`GitHub API error: ${response.status} - Gist not found or not accessible. Please verify STATE_GIST_ID secret is correct.`);
+        }
+        const gist = await response.json();
+        const content = gist.files['state.json']?.content;
+        if (content) {
+            const state = JSON.parse(content);
+            log(`[state] Loaded from Gist: last_id=${state.last_id || 'none'}, user_id=${state.user_id || 'none'}`);
+            return state;
+        }
+        log(`[state] Gist exists but state.json not found, starting fresh`);
+        return { last_id: null, user_id: null };
     } catch (e) {
-        return { last_id: null };
+        err(`[state] CRITICAL: Could not load from Gist: ${e.message}`);
+        throw e;
     }
 }
 
-async function saveState(filePath, lastId) {
-    const gistId = process.env.STATE_GIST_ID;
-    const githubToken = process.env.GITHUB_TOKEN;
+async function saveState(lastId, userId) {
+    const { gistId, gistToken } = getGistCredentials();
 
-    // Use GitHub Gist if running in CI
-    if (gistId && githubToken) {
-        try {
-            const response = await fetch(`https://api.github.com/gists/${gistId}`, {
-                method: 'PATCH',
-                headers: {
-                    'Authorization': `token ${githubToken}`,
-                    'Accept': 'application/vnd.github.v3+json',
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    files: {
-                        'state.json': {
-                            content: JSON.stringify({ last_id: lastId })
-                        }
+    try {
+        const response = await fetch(`https://api.github.com/gists/${gistId}`, {
+            method: 'PATCH',
+            headers: {
+                'Authorization': `token ${gistToken}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                files: {
+                    'state.json': {
+                        content: JSON.stringify({ last_id: lastId, user_id: userId })
                     }
-                })
-            });
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`GitHub API error: ${response.status} - ${errorText}`);
-            }
-            log(`[state] Saved to Gist: ${lastId}`);
-            return;
-        } catch (e) {
-            err(`[state] CRITICAL: Could not save to Gist: ${e.message}`);
-            throw e; // Fail fast
+                }
+            })
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`GitHub API error: ${response.status} - ${errorText}`);
         }
-    }
-
-    // Fallback to local file for local development
-    try {
-        await fs.writeFile(filePath, JSON.stringify({ last_id: lastId }), 'utf-8');
+        log(`[state] Saved to Gist: ${lastId}`);
     } catch (e) {
-        err(`[state] Could not write ${filePath}: ${e.message}`);
+        err(`[state] CRITICAL: Could not save to Gist: ${e.message}`);
+        throw e;
     }
 }
 
@@ -135,7 +117,7 @@ function chunkTelegramMessage(text, chunkSize = 4096) {
             cut = end;
         }
         chunks.push(text.substring(start, cut));
-        start = cut;
+        start = cut === end ? end : cut + 1; // skip the newline delimiter
     }
     return chunks;
 }
@@ -167,8 +149,7 @@ async function sendToTelegram(bot, chatId, message, disablePreview = false, dryR
     for (const part of chunks) {
         try {
             await bot.api.sendMessage(chatId, part, {
-                disable_web_page_preview: disablePreview,
-                parse_mode: 'HTML'
+                disable_web_page_preview: disablePreview
             });
         } catch (e) {
             err(`[telegram] ${e.message}`);
@@ -183,7 +164,7 @@ async function sendToTelegram(bot, chatId, message, disablePreview = false, dryR
 function getClient() {
     const bearer = process.env.X_BEARER_TOKEN;
     if (!bearer) {
-        throw new Error("Missing X_BEARER_TOKEN. Set it in your environment or .env file.");
+        throw new Error("Missing X_BEARER_TOKEN.");
     }
     return new TwitterApi(bearer);
 }
@@ -221,10 +202,10 @@ async function fetchNewTweets(client, userId, sinceId, includeRetweets, includeR
 }
 
 // -------------------------
-// Core run step
+// Core run
 // -------------------------
-async function runOnce(args, bot = null) {
-    const { username, stateFile, includeRetweets, includeReplies, maxPerRun, disablePreview, dryRun } = args;
+async function run(args) {
+    const { username, includeRetweets, includeReplies, maxPerRun, disablePreview, dryRun } = args;
     const tgToken = process.env.TELEGRAM_BOT_TOKEN;
     const tgChat = process.env.TELEGRAM_CHAT_ID;
 
@@ -232,41 +213,46 @@ async function runOnce(args, bot = null) {
         throw new Error("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID.");
     }
 
-    // Create bot instance once and reuse
-    if (!bot && !dryRun) {
-        bot = new Bot(tgToken);
-    }
-
+    const bot = dryRun ? null : new Bot(tgToken);
     const client = getClient();
-    const userId = await getUserId(client, username);
 
-    const state = await loadState(stateFile);
+    // Use cached user_id from Gist if available, otherwise look up and cache
+    const state = await loadState();
     let lastId = state.last_id;
+    let userId = state.user_id;
+
+    if (!userId) {
+        log(`[info] Looking up user ID for @${username}`);
+        userId = await getUserId(client, username);
+        await saveState(lastId, userId);
+    }
 
     try {
         const tweets = await fetchNewTweets(client, userId, lastId, includeRetweets, includeReplies, maxPerRun);
 
         if (tweets.length === 0) {
             log("[info] No new tweets.");
-            return lastId;
+            return;
         }
+
+        log(`[info] Found ${tweets.length} new tweet(s)`);
 
         for (const t of tweets) {
             const msg = buildMessage(username, t);
             await sendToTelegram(bot, tgChat, msg, disablePreview, dryRun);
             lastId = t.id;
-            await saveState(stateFile, lastId);
+            await saveState(lastId, userId);
             log(`[posted] ${t.id}`);
         }
+
+        log(`[done] Posted ${tweets.length} tweet(s)`);
     } catch (e) {
         if (e.code === 429) {
             log("[warning] X API rate limit reached — skipping this run.");
-            return lastId;
+            return;
         }
         throw e;
     }
-
-    return lastId;
 }
 
 // -------------------------
@@ -274,10 +260,7 @@ async function runOnce(args, bot = null) {
 // -------------------------
 async function main() {
     const argv = yargs(hideBin(process.argv))
-        .option('username', { default: DEFAULT_USERNAME, describe: 'X handle without @' })
-        .option('state-file', { default: DEFAULT_STATE_FILE, describe: 'Path to last_id state file' })
-        .option('interval', { default: DEFAULT_INTERVAL, type: 'number', describe: 'Loop interval seconds' })
-        .option('once', { type: 'boolean', describe: 'Run a single cycle and exit' })
+        .option('username', { default: process.env.X_USERNAME, describe: 'X handle without @', demandOption: !process.env.X_USERNAME })
         .option('include-retweets', { type: 'boolean', describe: 'Also post retweets' })
         .option('include-replies', { type: 'boolean', describe: 'Also post replies' })
         .option('max-per-run', { default: DEFAULT_MAX_PER_RUN, type: 'number', describe: 'Max tweets to post per run' })
@@ -286,36 +269,13 @@ async function main() {
         .help()
         .argv;
 
-    if (argv.once) {
-        try {
-            await runOnce(argv);
-        } catch (e) {
-            err(`[error] ${e.message}`);
-            process.exit(1);
-        }
-        return;
-    }
+    log(`[start] Checking @${argv.username}`);
 
-    log(`[start] Polling @${argv.username} every ${argv.interval}s. Press Ctrl+C to stop.`);
-
-    // Create bot instance once for the entire loop
-    const tgToken = process.env.TELEGRAM_BOT_TOKEN;
-    const bot = argv.dryRun ? null : (tgToken ? new Bot(tgToken) : null);
-
-    // Initial run
-    // We wrap in a loop
-    while (true) {
-        try {
-            await runOnce(argv, bot);
-        } catch (e) {
-            if (e.code === 429) {
-                 log("[warning] Rate limited in loop — sleeping 300s then continuing.");
-                 await new Promise(resolve => setTimeout(resolve, 300000));
-            } else {
-                err(`[error] ${e.message}`);
-            }
-        }
-        await new Promise(resolve => setTimeout(resolve, Math.max(5000, argv.interval * 1000)));
+    try {
+        await run(argv);
+    } catch (e) {
+        err(`[error] ${e.message}`);
+        process.exit(1);
     }
 }
 
