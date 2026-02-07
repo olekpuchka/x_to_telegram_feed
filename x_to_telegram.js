@@ -182,8 +182,6 @@ async function fetchNewTweets(client, userId, sinceId, includeRetweets, includeR
     if (!includeRetweets) exclude.push('retweets');
     if (!includeReplies) exclude.push('replies');
 
-    // twitter-api-v2 pagination helper
-    // We only need one page as per original logic
     const tweets = await client.v2.userTimeline(userId, {
         since_id: sinceId || undefined,
         max_results: Math.min(100, maxPerRun),
@@ -191,19 +189,35 @@ async function fetchNewTweets(client, userId, sinceId, includeRetweets, includeR
         exclude: exclude.length ? exclude : undefined
     });
 
-    // The library returns a paginator, .data.data contains the tweets
-    // If no tweets, .data.data might be undefined
     const data = tweets.data.data || [];
 
     // Sort oldest -> newest (API returns newest first)
-    data.sort((a, b) => BigInt(a.id) < BigInt(b.id) ? -1 : 1);
+    data.sort((a, b) => a.id < b.id ? -1 : (a.id > b.id ? 1 : 0));
 
-    return data.slice(0, maxPerRun);
+    return data;
 }
 
 // -------------------------
 // Core run
 // -------------------------
+async function getUserIdWithCache(client, username, state) {
+    if (state.user_id) {
+        return state.user_id;
+    }
+
+    log(`[info] Looking up user ID for @${username}`);
+    return await getUserId(client, username);
+}
+
+async function processTweets(tweets, username, bot, chatId, disablePreview, dryRun, userId) {
+    for (const tweet of tweets) {
+        const msg = buildMessage(username, tweet);
+        await sendToTelegram(bot, chatId, msg, disablePreview, dryRun);
+        await saveState(tweet.id, userId);
+        log(`[posted] ${tweet.id}`);
+    }
+}
+
 async function run(args) {
     const { username, includeRetweets, includeReplies, maxPerRun, disablePreview, dryRun } = args;
     const tgToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -213,22 +227,19 @@ async function run(args) {
         throw new Error("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID.");
     }
 
-    const bot = dryRun ? null : new Bot(tgToken);
     const client = getClient();
 
     // Use cached user_id from Gist if available, otherwise look up and cache
     const state = await loadState();
-    let lastId = state.last_id;
-    let userId = state.user_id;
+    let userId = await getUserIdWithCache(client, username, state);
 
-    if (!userId) {
-        log(`[info] Looking up user ID for @${username}`);
-        userId = await getUserId(client, username);
-        await saveState(lastId, userId);
+    // Save user_id if it was just fetched
+    if (!state.user_id) {
+        await saveState(state.last_id, userId);
     }
 
     try {
-        const tweets = await fetchNewTweets(client, userId, lastId, includeRetweets, includeReplies, maxPerRun);
+        const tweets = await fetchNewTweets(client, userId, state.last_id, includeRetweets, includeReplies, maxPerRun);
 
         if (tweets.length === 0) {
             log("[info] No new tweets.");
@@ -237,13 +248,11 @@ async function run(args) {
 
         log(`[info] Found ${tweets.length} new tweet(s)`);
 
-        for (const t of tweets) {
-            const msg = buildMessage(username, t);
-            await sendToTelegram(bot, tgChat, msg, disablePreview, dryRun);
-            lastId = t.id;
-            await saveState(lastId, userId);
-            log(`[posted] ${t.id}`);
-        }
+        const bot = dryRun ? null : new Bot(tgToken);
+
+        await processTweets(
+            tweets, username, bot, tgChat, disablePreview, dryRun, userId
+        );
 
         log(`[done] Posted ${tweets.length} tweet(s)`);
     } catch (e) {
