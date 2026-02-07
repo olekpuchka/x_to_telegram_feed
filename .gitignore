@@ -1,2 +1,12 @@
+# Dependencies
 node_modules/
+
+# Environment files (for local testing)
+.env
+.env.local
+
+# Logs
+*.log
+
+# macOS
 .DS_Store
