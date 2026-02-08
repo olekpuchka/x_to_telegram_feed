@@ -20,20 +20,23 @@ import { hideBin } from 'yargs/helpers';
 // Defaults
 // -------------------------
 const DEFAULT_MAX_PER_RUN = 50;
+const TELEGRAM_MAX_MESSAGE_LENGTH = 4096;
+const X_API_MAX_RESULTS = 100;
+const GIST_STATE_FILE = 'state.json';
 
 // -------------------------
 // Utilities
 // -------------------------
-function timestamp() {
+function getTimestamp() {
     return new Date().toISOString();
 }
 
 function log(msg) {
-    console.log(`${timestamp()} ${msg}`);
+    console.log(`${getTimestamp()} ${msg}`);
 }
 
-function err(msg) {
-    console.error(`${timestamp()} ${msg}`);
+function logError(msg) {
+    console.error(`${getTimestamp()} ${msg}`);
 }
 
 function getGistCredentials() {
@@ -45,31 +48,39 @@ function getGistCredentials() {
     return { gistId, gistToken };
 }
 
+function getGistUrl(gistId) {
+    return `https://api.github.com/gists/${gistId}`;
+}
+
+function getGistHeaders(gistToken) {
+    return {
+        'Authorization': `Bearer ${gistToken}`,
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+    };
+}
+
 async function loadState() {
     const { gistId, gistToken } = getGistCredentials();
 
     try {
-        const response = await fetch(`https://api.github.com/gists/${gistId}`, {
-            headers: {
-                'Authorization': `Bearer ${gistToken}`,
-                'Accept': 'application/vnd.github+json',
-                'X-GitHub-Api-Version': '2022-11-28'
-            }
+        const response = await fetch(getGistUrl(gistId), {
+            headers: getGistHeaders(gistToken)
         });
         if (!response.ok) {
             throw new Error(`GitHub API error: ${response.status} - Gist not found or not accessible. Please verify STATE_GIST_ID secret is correct.`);
         }
         const gist = await response.json();
-        const content = gist.files['state.json']?.content;
+        const content = gist.files[GIST_STATE_FILE]?.content;
         if (content) {
             const state = JSON.parse(content);
             log(`[state] Loaded from Gist: last_id=${state.last_id || 'none'}, user_id=${state.user_id || 'none'}`);
             return state;
         }
-        log(`[state] Gist exists but state.json not found, starting fresh`);
+        log(`[state] Gist exists but ${GIST_STATE_FILE} not found, starting fresh`);
         return { last_id: null, user_id: null };
     } catch (e) {
-        err(`[state] CRITICAL: Could not load from Gist: ${e.message}`);
+        logError(`[state] CRITICAL: Could not load from Gist: ${e.message}`);
         throw e;
     }
 }
@@ -78,17 +89,12 @@ async function saveState(lastId, userId) {
     const { gistId, gistToken } = getGistCredentials();
 
     try {
-        const response = await fetch(`https://api.github.com/gists/${gistId}`, {
+        const response = await fetch(getGistUrl(gistId), {
             method: 'PATCH',
-            headers: {
-                'Authorization': `Bearer ${gistToken}`,
-                'Accept': 'application/vnd.github+json',
-                'X-GitHub-Api-Version': '2022-11-28',
-                'Content-Type': 'application/json'
-            },
+            headers: { ...getGistHeaders(gistToken), 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 files: {
-                    'state.json': {
+                    [GIST_STATE_FILE]: {
                         content: JSON.stringify({ last_id: lastId, user_id: userId })
                     }
                 }
@@ -100,12 +106,12 @@ async function saveState(lastId, userId) {
         }
         log(`[state] Saved to Gist: ${lastId}`);
     } catch (e) {
-        err(`[state] CRITICAL: Could not save to Gist: ${e.message}`);
+        logError(`[state] CRITICAL: Could not save to Gist: ${e.message}`);
         throw e;
     }
 }
 
-function chunkTelegramMessage(text, chunkSize = 4096) {
+function chunkTelegramMessage(text, chunkSize = TELEGRAM_MAX_MESSAGE_LENGTH) {
     if (text.length <= chunkSize) {
         return [text];
     }
@@ -113,23 +119,18 @@ function chunkTelegramMessage(text, chunkSize = 4096) {
     let start = 0;
     while (start < text.length) {
         let end = Math.min(start + chunkSize, text.length);
-        // Try to cut at the last newline
-        let cut = text.lastIndexOf('\n', end);
-        if (cut === -1 || cut <= start) {
-            cut = end;
+        let splitAt = text.lastIndexOf('\n', end);
+        if (splitAt === -1 || splitAt <= start) {
+            splitAt = end;
         }
-        chunks.push(text.substring(start, cut));
-        start = cut === end ? end : cut + 1; // skip the newline delimiter
+        chunks.push(text.substring(start, splitAt));
+        start = splitAt === end ? end : splitAt + 1;
     }
     return chunks;
 }
 
 function extractTweetText(tweet) {
-    // Check for note_tweet (long form)
-    if (tweet.note_tweet && tweet.note_tweet.text) {
-        return tweet.note_tweet.text.trim();
-    }
-    return (tweet.text || "").trim();
+    return (tweet.note_tweet?.text ?? tweet.text ?? "").trim();
 }
 
 function buildMessage(username, tweet) {
@@ -139,7 +140,7 @@ function buildMessage(username, tweet) {
     return `${text}\n\nSource: ${tweetUrl}`;
 }
 
-async function sendToTelegram(bot, chatId, message, disablePreview = false, dryRun = false) {
+async function sendToTelegram({ bot, chatId, message, disablePreview = false, dryRun = false }) {
     if (dryRun) {
         log(`[dry-run] Telegram message:\n${message}\n${'-'.repeat(40)}`);
         return;
@@ -153,7 +154,7 @@ async function sendToTelegram(bot, chatId, message, disablePreview = false, dryR
                 disable_web_page_preview: disablePreview
             });
         } catch (e) {
-            err(`[telegram] ${e.message}`);
+            logError(`[telegram] ${e.message}`);
             throw e;
         }
     }
@@ -185,15 +186,17 @@ async function fetchNewTweets(client, userId, sinceId, includeRetweets, includeR
 
     const tweets = await client.v2.userTimeline(userId, {
         since_id: sinceId || undefined,
-        max_results: Math.min(100, maxPerRun),
+        max_results: Math.min(X_API_MAX_RESULTS, maxPerRun),
         "tweet.fields": ["note_tweet"],
         exclude: exclude.length ? exclude : undefined
     });
 
-    const data = tweets.data.data || [];
+    // tweets.data is the API response; .data within it is the array of tweet objects
+    const data = tweets.data?.data || [];
 
     // Sort oldest -> newest (API returns newest first)
-    data.sort((a, b) => a.id < b.id ? -1 : (a.id > b.id ? 1 : 0));
+    // Tweet IDs are numeric strings that sort lexicographically
+    data.sort((a, b) => a.id.localeCompare(b.id));
 
     return data;
 }
@@ -210,10 +213,12 @@ async function getUserIdWithCache(client, username, state) {
     return await getUserId(client, username);
 }
 
-async function processTweets(tweets, username, bot, chatId, disablePreview, dryRun, userId) {
+async function processTweets(tweets, { username, tgToken, chatId, disablePreview, dryRun, userId }) {
+    const bot = dryRun ? null : new Bot(tgToken);
+
     for (const tweet of tweets) {
         const msg = buildMessage(username, tweet);
-        await sendToTelegram(bot, chatId, msg, disablePreview, dryRun);
+        await sendToTelegram({ bot, chatId, message: msg, disablePreview, dryRun });
         await saveState(tweet.id, userId);
         log(`[posted] ${tweet.id}`);
     }
@@ -249,15 +254,14 @@ async function run(args) {
 
         log(`[info] Found ${tweets.length} new tweet(s)`);
 
-        const bot = dryRun ? null : new Bot(tgToken);
-
         await processTweets(
-            tweets, username, bot, tgChat, disablePreview, dryRun, userId
+            tweets, { username, tgToken, chatId: tgChat, disablePreview, dryRun, userId }
         );
 
         log(`[done] Posted ${tweets.length} tweet(s)`);
     } catch (e) {
-        if (e.code === 429) {
+        // Handle X API rate limiting
+        if (e.code === 429 || e.statusCode === 429 || e.response?.status === 429) {
             log("[warning] X API rate limit reached — skipping this run.");
             return;
         }
@@ -269,7 +273,8 @@ async function run(args) {
 // Main / CLI
 // -------------------------
 async function main() {
-    const argv = yargs(hideBin(process.argv))
+    const argv = await yargs(hideBin(process.argv))
+        .parserConfiguration({ 'camel-case-expansion': true })
         .option('username', { default: process.env.X_USERNAME, describe: 'X handle without @', demandOption: !process.env.X_USERNAME })
         .option('include-retweets', { type: 'boolean', default: false, describe: 'Also post retweets' })
         .option('include-replies', { type: 'boolean', default: false, describe: 'Also post replies' })
@@ -284,7 +289,7 @@ async function main() {
     try {
         await run(argv);
     } catch (e) {
-        err(`[error] ${e.message}`);
+        logError(`[error] ${e.message}`);
         process.exit(1);
     }
 }

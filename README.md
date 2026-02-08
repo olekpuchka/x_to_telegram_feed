@@ -8,12 +8,13 @@ Automatically forwards new posts from an X (Twitter) account to a Telegram chann
 ## Features
 
 - 🔄 Automatically polls X for new posts
-- 📱 Sends posts to Telegram channel with formatting preserved
+- 📱 Sends posts to Telegram channel with formatted source links
 - ⚡ Rate-limit safe with graceful error handling
 - 🗄️ State persistence via GitHub Gist (no git history pollution)
 - 🔁 Runs on GitHub Actions every 30 minutes
 - 🎯 Configurable filters (retweets, replies)
 - 📝 Support for long-form tweets (note_tweet)
+- 🔗 Clean message formatting with "Source: [link]" attribution
 
 ## Setup
 
@@ -107,15 +108,27 @@ node x_to_telegram.js --dry-run
 
 1. **Fetch**: Queries X API for new posts since last known tweet ID
 2. **Filter**: Excludes retweets/replies (unless enabled)
-3. **Post**: Forwards each tweet to Telegram
-4. **Update**: Saves latest tweet ID and cached user ID to GitHub Gist
-5. **Repeat**: Runs every 30 minutes via GitHub Actions
+3. **Format**: Formats tweets with text and "Source: [link]" attribution
+4. **Post**: Forwards each tweet to Telegram
+5. **Update**: Saves latest tweet ID and cached user ID to GitHub Gist
+6. **Repeat**: Runs every 30 minutes via GitHub Actions
+
+### Message Format
+
+Tweets are posted to Telegram in the following format:
+
+```
+[Tweet text content]
+
+Source: https://x.com/username/status/123456789
+```
 
 ## Troubleshooting
 
 ### Rate Limits
 
-The script handles X API rate limits gracefully:
+The script handles X API rate limits gracefully with improved error detection:
+- Catches rate limit errors from multiple API response formats
 - Returns early on 429 errors
 - Logs warning and continues on next run
 - GitHub Actions timeout: 5 minutes
@@ -128,7 +141,7 @@ If you see `[info] No new tweets`, it means:
 
 ### Telegram Errors
 
-Long tweets are automatically chunked (4096 char limit). If posting fails:
+Long tweets are automatically chunked at Telegram's 4096 character limit. If posting fails:
 - Check bot has admin rights in the channel
 - Verify `TELEGRAM_CHAT_ID` format
 - For private channels, ensure bot was added as admin
@@ -145,6 +158,7 @@ Long tweets are automatically chunked (4096 char limit). If posting fails:
 │       └── x-to-telegram.yml # GitHub Actions workflow
 ├── .gitignore
 ├── package.json
+├── package-lock.json
 ├── LICENSE
 └── README.md
 ```
