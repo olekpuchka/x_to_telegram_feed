@@ -51,8 +51,9 @@ async function loadState() {
     try {
         const response = await fetch(`https://api.github.com/gists/${gistId}`, {
             headers: {
-                'Authorization': `token ${gistToken}`,
-                'Accept': 'application/vnd.github.v3+json'
+                'Authorization': `Bearer ${gistToken}`,
+                'Accept': 'application/vnd.github+json',
+                'X-GitHub-Api-Version': '2022-11-28'
             }
         });
         if (!response.ok) {
@@ -80,8 +81,9 @@ async function saveState(lastId, userId) {
         const response = await fetch(`https://api.github.com/gists/${gistId}`, {
             method: 'PATCH',
             headers: {
-                'Authorization': `token ${gistToken}`,
-                'Accept': 'application/vnd.github.v3+json',
+                'Authorization': `Bearer ${gistToken}`,
+                'Accept': 'application/vnd.github+json',
+                'X-GitHub-Api-Version': '2022-11-28',
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
@@ -131,11 +133,10 @@ function extractTweetText(tweet) {
 }
 
 function buildMessage(username, tweet) {
-    // tweet.created_at is ISO string from API
     const tweetUrl = `https://x.com/${username}/status/${tweet.id}`;
     const text = extractTweetText(tweet);
 
-    return `${text}\n\n${tweetUrl}`;
+    return `${text}\n\nSource: ${tweetUrl}`;
 }
 
 async function sendToTelegram(bot, chatId, message, disablePreview = false, dryRun = false) {
@@ -185,7 +186,7 @@ async function fetchNewTweets(client, userId, sinceId, includeRetweets, includeR
     const tweets = await client.v2.userTimeline(userId, {
         since_id: sinceId || undefined,
         max_results: Math.min(100, maxPerRun),
-        "tweet.fields": ["created_at", "entities", "note_tweet"],
+        "tweet.fields": ["note_tweet"],
         exclude: exclude.length ? exclude : undefined
     });
 
@@ -270,11 +271,11 @@ async function run(args) {
 async function main() {
     const argv = yargs(hideBin(process.argv))
         .option('username', { default: process.env.X_USERNAME, describe: 'X handle without @', demandOption: !process.env.X_USERNAME })
-        .option('include-retweets', { type: 'boolean', describe: 'Also post retweets' })
-        .option('include-replies', { type: 'boolean', describe: 'Also post replies' })
+        .option('include-retweets', { type: 'boolean', default: false, describe: 'Also post retweets' })
+        .option('include-replies', { type: 'boolean', default: false, describe: 'Also post replies' })
         .option('max-per-run', { default: DEFAULT_MAX_PER_RUN, type: 'number', describe: 'Max tweets to post per run' })
-        .option('disable-preview', { type: 'boolean', describe: 'Disable Telegram link previews' })
-        .option('dry-run', { type: 'boolean', describe: 'Do everything except sending to Telegram' })
+        .option('disable-preview', { type: 'boolean', default: false, describe: 'Disable Telegram link previews' })
+        .option('dry-run', { type: 'boolean', default: false, describe: 'Do everything except sending to Telegram' })
         .help()
         .argv;
 
