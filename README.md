@@ -19,6 +19,7 @@ Automatically forwards new posts from an X (Twitter) account to a Telegram chann
 - 🔒 Secret validation prevents misconfiguration
 - 📊 Job summaries with run statistics and error details
 - 🎛️ Manual trigger with configurable parameters
+- 🎯 Post specific tweets by ID
 
 ## Setup
 
@@ -94,7 +95,14 @@ You can trigger the workflow manually with custom parameters:
 4. Configure parameters:
    - **Maximum tweets to process per run**: Enter a number (default: `50`)
    - **Run in dry-run mode**: Check to test without posting (default: unchecked)
+   - **Specific tweet ID to post**: Enter a tweet ID to post a specific tweet (overrides timeline fetching)
 5. Click **Run workflow** to execute
+
+**Posting a specific tweet:**
+- Extract the tweet ID from the URL: `https://x.com/username/status/1234567890` → ID is `1234567890`
+- Enter this ID in the "Specific tweet ID to post" field
+- When a tweet ID is provided, the workflow will fetch and post only that specific tweet
+- This is useful for manually posting older tweets or specific content
 
 ### Job Summaries
 
@@ -119,6 +127,7 @@ View summaries in the Actions tab under each workflow run.
 | `--max-per-run` | `50` | Max tweets to post per run |
 | `--disable-preview` | `false` | Disable link previews |
 | `--dry-run` | `false` | Test mode (no actual posting) |
+| `--tweet-id` | - | Specific tweet ID to post (overrides timeline) |
 
 ### Examples
 
@@ -131,6 +140,12 @@ node x_to_telegram.js --include-retweets --include-replies
 
 # Dry run to test
 node x_to_telegram.js --dry-run
+
+# Post a specific tweet by ID
+node x_to_telegram.js --tweet-id 1234567890
+
+# Post a specific tweet in dry-run mode
+node x_to_telegram.js --tweet-id 1234567890 --dry-run
 ```
 
 ## How It Works

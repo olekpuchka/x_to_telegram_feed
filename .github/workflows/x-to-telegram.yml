@@ -17,6 +17,10 @@ on:
         required: false
         default: false
         type: boolean
+      tweet-id:
+        description: 'Specific tweet ID to post (overrides timeline fetching)'
+        required: false
+        type: string
 
 # Avoid overlapping runs if one is still in progress
 concurrency:
@@ -89,7 +93,11 @@ jobs:
           if [ "${{ github.event.inputs.dry-run }}" = "true" ]; then
             DRY_RUN_FLAG="--dry-run"
           fi
-          node x_to_telegram.js --max-per-run "$MAX_PER_RUN" $DRY_RUN_FLAG 2>&1 | tee run.log
+          TWEET_ID_FLAG=""
+          if [ -n "${{ github.event.inputs.tweet-id }}" ]; then
+            TWEET_ID_FLAG="--tweet-id ${{ github.event.inputs.tweet-id }}"
+          fi
+          node x_to_telegram.js --max-per-run "$MAX_PER_RUN" $DRY_RUN_FLAG $TWEET_ID_FLAG 2>&1 | tee run.log
 
           # Extract summary from logs
           TWEET_COUNT=$(grep -c "\[posted\]" run.log || echo "0")

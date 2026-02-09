@@ -296,6 +296,23 @@ async function fetchNewTweets(client, userId, sinceId, includeRetweets, includeR
     return { tweets: data, media: includes.media || [] };
 }
 
+async function fetchSpecificTweet(client, tweetId) {
+    const response = await client.v2.singleTweet(tweetId, {
+        "tweet.fields": ["note_tweet", "attachments", "entities"],
+        "expansions": ["attachments.media_keys"],
+        "media.fields": ["url", "preview_image_url", "type"]
+    });
+
+    const tweet = response.data;
+    const includes = response.includes || {};
+
+    if (!tweet) {
+        throw new Error(`Tweet ${tweetId} not found.`);
+    }
+
+    return { tweets: [tweet], media: includes.media || [] };
+}
+
 // -------------------------
 // Core run
 // -------------------------
@@ -328,7 +345,7 @@ async function processTweets(tweets, mediaData, { username, tgToken, chatId, dis
 }
 
 async function run(args) {
-    const { username, includeRetweets, includeReplies, maxPerRun, disablePreview, dryRun } = args;
+    const { username, includeRetweets, includeReplies, maxPerRun, disablePreview, dryRun, tweetId } = args;
     const tgToken = process.env.TELEGRAM_BOT_TOKEN;
     const tgChat = process.env.TELEGRAM_CHAT_ID;
 
@@ -343,7 +360,14 @@ async function run(args) {
     const userId = await getUserIdWithCache(client, username, state);
 
     try {
-        const { tweets, media } = await fetchNewTweets(client, userId, state.last_id, includeRetweets, includeReplies, maxPerRun);
+        let tweets, media;
+
+        if (tweetId) {
+            log(`[info] Fetching specific tweet: ${tweetId}`);
+            ({ tweets, media } = await fetchSpecificTweet(client, tweetId));
+        } else {
+            ({ tweets, media } = await fetchNewTweets(client, userId, state.last_id, includeRetweets, includeReplies, maxPerRun));
+        }
 
         if (tweets.length === 0) {
             log("[info] No new tweets.");
@@ -379,6 +403,7 @@ async function main() {
         .option('max-per-run', { default: DEFAULT_MAX_PER_RUN, type: 'number', describe: 'Max tweets to post per run' })
         .option('disable-preview', { type: 'boolean', default: false, describe: 'Disable Telegram link previews' })
         .option('dry-run', { type: 'boolean', default: false, describe: 'Do everything except sending to Telegram' })
+        .option('tweet-id', { type: 'string', describe: 'Specific tweet ID to post (overrides timeline fetching)' })
         .help()
         .argv;
 
