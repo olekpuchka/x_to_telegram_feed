@@ -153,11 +153,17 @@ function extractTweetText(tweet) {
     return text.replace(/\s+/g, ' ').replace(/\n\s+\n/g, '\n\n').trim();
 }
 
-function buildMessage(username, tweet) {
+function buildMessage(username, tweet, hasVideoPreview = false) {
     const tweetUrl = `https://x.com/${username}/status/${tweet.id}`;
     const tweetText = extractTweetText(tweet);
 
-    return `${tweetText}\n\nSource:\n${tweetUrl}`;
+    let message = tweetText;
+    if (hasVideoPreview) {
+        message += '\n\n🎬 Video preview — click Source link below to watch';
+    }
+    message += `\n\nSource:\n${tweetUrl}`;
+
+    return message;
 }
 
 function extractMedia(tweet, mediaData) {
@@ -169,10 +175,17 @@ function extractMedia(tweet, mediaData) {
 
     return mediaKeys
         .map(key => mediaMap.get(key))
-        .filter(media => media && (media.type === 'photo' || media.type === 'video') && media.url)
+        .filter(media => {
+            if (!media) return false;
+            // Photos have url, videos only have preview_image_url in free tier
+            if (media.type === 'photo' && media.url) return true;
+            if (media.type === 'video' && media.preview_image_url) return true;
+            return false;
+        })
         .map(media => ({
-            type: media.type,
-            url: media.url
+            type: media.type === 'video' ? 'photo' : media.type, // Telegram expects 'photo' type for images
+            url: media.type === 'video' ? media.preview_image_url : media.url,
+            isVideoPreview: media.type === 'video'
         }));
 }
 
@@ -228,12 +241,8 @@ async function sendToTelegram({ bot, chatId, message, media = [], disablePreview
 
 async function sendSingleMedia(bot, chatId, message, mediaItem) {
     const caption = generateCaption(message);
-
-    if (mediaItem.type === 'photo') {
-        await bot.api.sendPhoto(chatId, mediaItem.url, { caption });
-    } else if (mediaItem.type === 'video') {
-        await bot.api.sendVideo(chatId, mediaItem.url, { caption });
-    }
+    // All media (including video previews) are sent as photos
+    await bot.api.sendPhoto(chatId, mediaItem.url, { caption });
 }
 
 async function sendMediaGroup(bot, chatId, message, media, disablePreview) {
@@ -332,13 +341,15 @@ async function processTweets(tweets, mediaData, { username, tgToken, chatId, dis
     const bot = dryRun ? null : new Bot(tgToken);
 
     for (const tweet of tweets) {
-        const msg = buildMessage(username, tweet);
         const media = extractMedia(tweet, mediaData);
+        const hasVideoPreview = media.some(m => m.isVideoPreview);
+        const msg = buildMessage(username, tweet, hasVideoPreview);
+
         await sendToTelegram({ bot, chatId, message: msg, media, disablePreview, dryRun });
         await saveState(tweet.id, userId);
 
         const mediaInfo = media.length > 0
-            ? ` (with ${media.length} media: ${media.map(m => m.type).join(', ')})`
+            ? ` (with ${media.length} media: ${media.map(m => m.isVideoPreview ? 'video preview' : m.type).join(', ')})`
             : '';
         log(`[posted] ${tweet.id}${mediaInfo}`);
     }

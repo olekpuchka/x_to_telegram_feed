@@ -9,7 +9,7 @@ Automatically forwards new posts from an X (Twitter) account to a Telegram chann
 
 - 🔄 Automatically polls X for new posts
 - 📱 Sends posts to Telegram channel with formatted source links
-- 🖼️ Forwards photos and videos (up to 10 media items per tweet)
+- 🖼️ Forwards photos and video thumbnails (up to 10 media items per tweet)
 - ⚡ Rate-limit safe with graceful error handling
 - 🗄️ State persistence via GitHub Gist (no git history pollution)
 - 🔁 Runs on GitHub Actions every 30 minutes
@@ -110,6 +110,8 @@ After each run, a summary is automatically created showing:
 - ✅ Job status (success/failure)
 - 📊 Number of tweets posted
 - 👤 Username being monitored
+- 🎯 Run mode (timeline fetch or specific tweet ID)
+- 🧪 Dry run status (if applicable)
 - ⏰ Execution timestamp
 - ⚠️ Error details (on failure)
 
@@ -176,9 +178,11 @@ https://x.com/username/status/123456789
 - Full text sent separately if caption exceeds limit
 
 **Tweets with videos:**
-- Single video: Sent as video with caption
-- Mixed media: Sent as media group supporting both photos and videos
+- Video thumbnails are sent as photo previews (free Twitter API tier limitation - only `preview_image_url` available, not full video URLs)
+- Messages include a 🎬 indicator with a note to click the source link
+- Mixed media: Sent as media group with photos and video thumbnails
 - Same caption handling as photos
+- Click the source link to watch the full video
 
 ## Troubleshooting
 
