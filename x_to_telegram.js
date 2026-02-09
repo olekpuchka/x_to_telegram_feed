@@ -74,7 +74,6 @@ async function fetchGist(gistId, gistToken) {
 }
 
 async function updateGist(gistId, gistToken, content) {
-    await fetchGist(gistId, gistToken); // Verify gist exists
     const response = await fetch(getGistUrl(gistId), {
         method: 'PATCH',
         headers: { ...getGistHeaders(gistToken), 'Content-Type': 'application/json' },
@@ -140,17 +139,28 @@ function chunkTelegramMessage(text, chunkSize = TELEGRAM_MAX_MESSAGE_LENGTH) {
 }
 
 function extractTweetText(tweet) {
-    return (tweet.note_tweet?.text ?? tweet.text ?? "").trim();
+    let text = (tweet.note_tweet?.text ?? tweet.text ?? "").trim();
+
+    // Remove t.co URLs since the source link is already included
+    const urls = tweet.entities?.urls || [];
+    for (const url of urls) {
+        if (url.url) {
+            text = text.replaceAll(url.url, '');
+        }
+    }
+
+    // Clean up extra whitespace
+    return text.replace(/\s+/g, ' ').replace(/\n\s+\n/g, '\n\n').trim();
 }
 
 function buildMessage(username, tweet) {
     const tweetUrl = `https://x.com/${username}/status/${tweet.id}`;
-    const text = extractTweetText(tweet);
+    const tweetText = extractTweetText(tweet);
 
-    return `${text}\n\nSource:\n${tweetUrl}`;
+    return `${tweetText}\n\nSource:\n${tweetUrl}`;
 }
 
-function extractMediaUrls(tweet, mediaData) {
+function extractMedia(tweet, mediaData) {
     const mediaKeys = tweet.attachments?.media_keys || [];
     if (mediaKeys.length === 0 || mediaData.length === 0) return [];
 
@@ -159,8 +169,17 @@ function extractMediaUrls(tweet, mediaData) {
 
     return mediaKeys
         .map(key => mediaMap.get(key))
-        .filter(media => media?.type === 'photo' && media.url)
-        .map(media => media.url);
+        .filter(media => media && (media.type === 'photo' || media.type === 'video') && media.url)
+        .map(media => ({
+            type: media.type,
+            url: media.url
+        }));
+}
+
+function generateCaption(message) {
+    return message.length <= TELEGRAM_CAPTION_MAX_LENGTH
+        ? message
+        : message.substring(0, TELEGRAM_CAPTION_MAX_LENGTH - 3) + '...';
 }
 
 async function sendTextMessageChunked(bot, chatId, message, disablePreview) {
@@ -172,26 +191,27 @@ async function sendTextMessageChunked(bot, chatId, message, disablePreview) {
     }
 }
 
-async function sendToTelegram({ bot, chatId, message, mediaUrls = [], disablePreview = false, dryRun = false }) {
+async function sendToTelegram({ bot, chatId, message, media = [], disablePreview = false, dryRun = false }) {
     if (dryRun) {
         log(`[dry-run] Telegram message:\n${message}`);
-        if (mediaUrls.length > 0) {
-            log(`[dry-run] Media URLs: ${mediaUrls.join(', ')}`);
+        if (media.length > 0) {
+            const mediaInfo = media.map(m => `${m.type}: ${m.url}`).join(', ');
+            log(`[dry-run] Media: ${mediaInfo}`);
         }
         log(`${'-'.repeat(40)}`);
         return;
     }
 
-    // Send photos with caption if available
-    if (mediaUrls.length > 0) {
+    // Send media with caption if available
+    if (media.length > 0) {
         try {
-            if (mediaUrls.length === 1) {
-                await sendSinglePhoto(bot, chatId, message, mediaUrls[0]);
+            if (media.length === 1) {
+                await sendSingleMedia(bot, chatId, message, media[0]);
             } else {
-                await sendMediaGroup(bot, chatId, message, mediaUrls, disablePreview);
+                await sendMediaGroup(bot, chatId, message, media, disablePreview);
             }
         } catch (e) {
-            logError(`[telegram] Error sending photo: ${e.message}`);
+            logError(`[telegram] Error sending media: ${e.message}`);
             // Fallback to text only
             await sendTextMessageChunked(bot, chatId, message, disablePreview);
         }
@@ -206,25 +226,27 @@ async function sendToTelegram({ bot, chatId, message, mediaUrls = [], disablePre
     }
 }
 
-async function sendSinglePhoto(bot, chatId, message, photoUrl) {
-    const caption = message.length <= TELEGRAM_CAPTION_MAX_LENGTH
-        ? message
-        : message.substring(0, TELEGRAM_CAPTION_MAX_LENGTH - 3) + '...';
+async function sendSingleMedia(bot, chatId, message, mediaItem) {
+    const caption = generateCaption(message);
 
-    await bot.api.sendPhoto(chatId, photoUrl, { caption });
+    if (mediaItem.type === 'photo') {
+        await bot.api.sendPhoto(chatId, mediaItem.url, { caption });
+    } else if (mediaItem.type === 'video') {
+        await bot.api.sendVideo(chatId, mediaItem.url, { caption });
+    }
 }
 
-async function sendMediaGroup(bot, chatId, message, mediaUrls, disablePreview) {
-    const mediaGroup = mediaUrls.slice(0, TELEGRAM_MEDIA_GROUP_MAX_SIZE).map((url, idx) => ({
-        type: 'photo',
-        media: url,
-        caption: idx === 0 && message.length <= TELEGRAM_CAPTION_MAX_LENGTH ? message : undefined
+async function sendMediaGroup(bot, chatId, message, media, disablePreview) {
+    const mediaGroup = media.slice(0, TELEGRAM_MEDIA_GROUP_MAX_SIZE).map((item, idx) => ({
+        type: item.type,
+        media: item.url,
+        caption: idx === 0 ? generateCaption(message) : undefined
     }));
 
     await bot.api.sendMediaGroup(chatId, mediaGroup);
 
     // If caption was too long or there are more than max media items, send text separately
-    if (message.length > TELEGRAM_CAPTION_MAX_LENGTH || mediaUrls.length > TELEGRAM_MEDIA_GROUP_MAX_SIZE) {
+    if (message.length > TELEGRAM_CAPTION_MAX_LENGTH || media.length > TELEGRAM_MEDIA_GROUP_MAX_SIZE) {
         await sendTextMessageChunked(bot, chatId, message, disablePreview);
     }
 }
@@ -257,7 +279,7 @@ async function fetchNewTweets(client, userId, sinceId, includeRetweets, includeR
     const tweets = await client.v2.userTimeline(userId, {
         since_id: sinceId || undefined,
         max_results: Math.min(X_API_MAX_RESULTS, maxPerRun),
-        "tweet.fields": ["note_tweet", "attachments"],
+        "tweet.fields": ["note_tweet", "attachments", "entities"],
         "expansions": ["attachments.media_keys"],
         "media.fields": ["url", "preview_image_url", "type"],
         exclude: exclude.length ? exclude : undefined
@@ -294,10 +316,14 @@ async function processTweets(tweets, mediaData, { username, tgToken, chatId, dis
 
     for (const tweet of tweets) {
         const msg = buildMessage(username, tweet);
-        const mediaUrls = extractMediaUrls(tweet, mediaData);
-        await sendToTelegram({ bot, chatId, message: msg, mediaUrls, disablePreview, dryRun });
+        const media = extractMedia(tweet, mediaData);
+        await sendToTelegram({ bot, chatId, message: msg, media, disablePreview, dryRun });
         await saveState(tweet.id, userId);
-        log(`[posted] ${tweet.id}${mediaUrls.length > 0 ? ` (with ${mediaUrls.length} image(s))` : ''}`);
+
+        const mediaInfo = media.length > 0
+            ? ` (with ${media.length} media: ${media.map(m => m.type).join(', ')})`
+            : '';
+        log(`[posted] ${tweet.id}${mediaInfo}`);
     }
 }
 

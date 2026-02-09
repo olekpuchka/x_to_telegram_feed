@@ -9,12 +9,13 @@ Automatically forwards new posts from an X (Twitter) account to a Telegram chann
 
 - 🔄 Automatically polls X for new posts
 - 📱 Sends posts to Telegram channel with formatted source links
+- 🖼️ Forwards photos and videos (up to 10 media items per tweet)
 - ⚡ Rate-limit safe with graceful error handling
 - 🗄️ State persistence via GitHub Gist (no git history pollution)
 - 🔁 Runs on GitHub Actions every 30 minutes
 - 🎯 Configurable filters (retweets, replies)
 - 📝 Support for long-form tweets (note_tweet)
-- 🔗 Clean message formatting with "Source: [link]" attribution
+- 🔗 Clean message formatting with automatic t.co link removal
 
 ## Setup
 
@@ -108,8 +109,8 @@ node x_to_telegram.js --dry-run
 
 1. **Fetch**: Queries X API for new posts since last known tweet ID
 2. **Filter**: Excludes retweets/replies (unless enabled)
-3. **Format**: Formats tweets with text and "Source: [link]" attribution
-4. **Post**: Forwards each tweet to Telegram
+3. **Format**: Formats tweets with text, removes t.co URLs, and extracts media
+4. **Post**: Forwards each tweet to Telegram (with photos if available)
 5. **Update**: Saves latest tweet ID and cached user ID to GitHub Gist
 6. **Repeat**: Runs every 30 minutes via GitHub Actions
 
@@ -117,11 +118,24 @@ node x_to_telegram.js --dry-run
 
 Tweets are posted to Telegram in the following format:
 
+**Text-only tweets:**
 ```
-[Tweet text content]
+[Tweet text with t.co URLs removed]
 
-Source: https://x.com/username/status/123456789
+Source:
+https://x.com/username/status/123456789
 ```
+
+**Tweets with photos:**
+- Single photo: Sent as photo with caption
+- Multiple photos: Sent as media group (up to 10) with caption
+- Caption includes tweet text (trimmed to 1024 chars if needed)
+- Full text sent separately if caption exceeds limit
+
+**Tweets with videos:**
+- Single video: Sent as video with caption
+- Mixed media: Sent as media group supporting both photos and videos
+- Same caption handling as photos
 
 ## Troubleshooting
 
@@ -145,6 +159,12 @@ Long tweets are automatically chunked at Telegram's 4096 character limit. If pos
 - Check bot has admin rights in the channel
 - Verify `TELEGRAM_CHAT_ID` format
 - For private channels, ensure bot was added as admin
+
+**Photo posting issues:**
+- Photos and videos are sent with captions (max 1024 chars)
+- If media delivery fails, tweet is sent as text-only (fallback)
+- Media groups support up to 10 items (photos and videos) per tweet
+- Both photos and videos are fully supported
 
 ## Development
 
