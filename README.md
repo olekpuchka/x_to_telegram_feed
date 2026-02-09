@@ -16,6 +16,9 @@ Automatically forwards new posts from an X (Twitter) account to a Telegram chann
 - 🎯 Configurable filters (retweets, replies)
 - 📝 Support for long-form tweets (note_tweet)
 - 🔗 Clean message formatting with automatic t.co link removal
+- 🔒 Secret validation prevents misconfiguration
+- 📊 Job summaries with run statistics and error details
+- 🎛️ Manual trigger with configurable parameters
 
 ## Setup
 
@@ -71,13 +74,38 @@ Add these secrets to your repository at `Settings → Secrets and variables → 
 4. Scopes: Check **`gist`** only
 5. Generate and copy the token
 
+> **Note:** The workflow automatically validates that all required secrets are configured before running. If any secret is missing, the workflow will fail with a clear error message indicating which secret needs to be added.
+
 ## Usage
 
-The workflow runs automatically every 30 minutes. You can also trigger it manually:
+### Automatic Runs
 
-1. Go to **Actions** tab
+The workflow runs automatically every 30 minutes with default settings:
+- Processes up to 50 tweets per run
+- Posts to your configured Telegram channel
+
+### Manual Runs
+
+You can trigger the workflow manually with custom parameters:
+
+1. Go to **Actions** tab in your repository
 2. Select **X → Telegram** workflow
-3. Click **Run workflow**
+3. Click **Run workflow** dropdown
+4. Configure parameters:
+   - **Maximum tweets to process per run**: Enter a number (default: `50`)
+   - **Run in dry-run mode**: Check to test without posting (default: unchecked)
+5. Click **Run workflow** to execute
+
+### Job Summaries
+
+After each run, a summary is automatically created showing:
+- ✅ Job status (success/failure)
+- 📊 Number of tweets posted
+- 👤 Username being monitored
+- ⏰ Execution timestamp
+- ⚠️ Error details (on failure)
+
+View summaries in the Actions tab under each workflow run.
 
 ## Configuration
 
@@ -138,6 +166,20 @@ https://x.com/username/status/123456789
 - Same caption handling as photos
 
 ## Troubleshooting
+
+### Workflow Setup Issues
+
+**Missing Secrets Error:**
+- The workflow validates all required secrets before execution
+- If you see "Error: [SECRET_NAME] secret is not set":
+  1. Go to repository **Settings → Secrets and variables → Actions**
+  2. Add the missing secret(s) listed in the error message
+  3. Re-run the workflow
+
+**Check Job Summaries:**
+- Every workflow run creates a summary in the Actions tab
+- Summaries show status, tweets posted, and error details
+- Failed runs include the last 20 log lines for debugging
 
 ### Rate Limits
 

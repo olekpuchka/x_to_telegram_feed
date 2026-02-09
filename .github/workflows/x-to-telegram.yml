@@ -5,7 +5,18 @@ on:
     # Every 30 minutes (UTC)
     - cron: "*/30 * * * *"
   # Manual trigger from the Actions tab
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      max-per-run:
+        description: 'Maximum tweets to process per run'
+        required: false
+        default: '50'
+        type: string
+      dry-run:
+        description: 'Run in dry-run mode (no actual posting)'
+        required: false
+        default: false
+        type: boolean
 
 # Avoid overlapping runs if one is still in progress
 concurrency:
@@ -25,6 +36,34 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Validate required secrets
+        run: |
+          if [ -z "${{ secrets.X_BEARER_TOKEN }}" ]; then
+            echo "❌ Error: X_BEARER_TOKEN secret is not set"
+            exit 1
+          fi
+          if [ -z "${{ secrets.X_USERNAME }}" ]; then
+            echo "❌ Error: X_USERNAME secret is not set"
+            exit 1
+          fi
+          if [ -z "${{ secrets.TELEGRAM_BOT_TOKEN }}" ]; then
+            echo "❌ Error: TELEGRAM_BOT_TOKEN secret is not set"
+            exit 1
+          fi
+          if [ -z "${{ secrets.TELEGRAM_CHAT_ID }}" ]; then
+            echo "❌ Error: TELEGRAM_CHAT_ID secret is not set"
+            exit 1
+          fi
+          if [ -z "${{ secrets.STATE_GIST_ID }}" ]; then
+            echo "❌ Error: STATE_GIST_ID secret is not set"
+            exit 1
+          fi
+          if [ -z "${{ secrets.GIST_TOKEN }}" ]; then
+            echo "❌ Error: GIST_TOKEN secret is not set"
+            exit 1
+          fi
+          echo "✅ All required secrets are configured"
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -35,6 +74,7 @@ jobs:
         run: npm ci
 
       - name: Run once (rate-limit safe)
+        id: run-script
         env:
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
           X_USERNAME: ${{ secrets.X_USERNAME }}
@@ -42,4 +82,34 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           STATE_GIST_ID: ${{ secrets.STATE_GIST_ID }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
-        run: node x_to_telegram.js --max-per-run 50
+        run: |
+          set -o pipefail
+          MAX_PER_RUN="${{ github.event.inputs.max-per-run || '50' }}"
+          DRY_RUN_FLAG=""
+          if [ "${{ github.event.inputs.dry-run }}" = "true" ]; then
+            DRY_RUN_FLAG="--dry-run"
+          fi
+          node x_to_telegram.js --max-per-run "$MAX_PER_RUN" $DRY_RUN_FLAG 2>&1 | tee run.log
+
+          # Extract summary from logs
+          TWEET_COUNT=$(grep -c "\[posted\]" run.log || echo "0")
+          echo "tweets_posted=$TWEET_COUNT" >> $GITHUB_OUTPUT
+        continue-on-error: false
+
+      - name: Create job summary
+        if: always()
+        run: |
+          echo "## X → Telegram Feed Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Username:** @${{ secrets.X_USERNAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Tweets Posted:** ${{ steps.run-script.outputs.tweets_posted || '0' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Timestamp:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ job.status }}" != "success" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### ⚠️ Error Details" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            tail -n 20 run.log >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No logs available"
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
