@@ -21,6 +21,8 @@ import { hideBin } from 'yargs/helpers';
 // -------------------------
 const DEFAULT_MAX_PER_RUN = 50;
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4096;
+const TELEGRAM_CAPTION_MAX_LENGTH = 1024;
+const TELEGRAM_MEDIA_GROUP_MAX_SIZE = 10;
 const X_API_MAX_RESULTS = 100;
 const GIST_STATE_FILE = 'state.json';
 
@@ -60,17 +62,39 @@ function getGistHeaders(gistToken) {
     };
 }
 
+async function fetchGist(gistId, gistToken) {
+    const response = await fetch(getGistUrl(gistId), {
+        headers: getGistHeaders(gistToken)
+    });
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`GitHub API error: ${response.status} - ${errorText}`);
+    }
+    return response.json();
+}
+
+async function updateGist(gistId, gistToken, content) {
+    await fetchGist(gistId, gistToken); // Verify gist exists
+    const response = await fetch(getGistUrl(gistId), {
+        method: 'PATCH',
+        headers: { ...getGistHeaders(gistToken), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            files: {
+                [GIST_STATE_FILE]: { content: JSON.stringify(content) }
+            }
+        })
+    });
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`GitHub API error: ${response.status} - ${errorText}`);
+    }
+}
+
 async function loadState() {
     const { gistId, gistToken } = getGistCredentials();
 
     try {
-        const response = await fetch(getGistUrl(gistId), {
-            headers: getGistHeaders(gistToken)
-        });
-        if (!response.ok) {
-            throw new Error(`GitHub API error: ${response.status} - Gist not found or not accessible. Please verify STATE_GIST_ID secret is correct.`);
-        }
-        const gist = await response.json();
+        const gist = await fetchGist(gistId, gistToken);
         const content = gist.files[GIST_STATE_FILE]?.content;
         if (content) {
             const state = JSON.parse(content);
@@ -89,21 +113,7 @@ async function saveState(lastId, userId) {
     const { gistId, gistToken } = getGistCredentials();
 
     try {
-        const response = await fetch(getGistUrl(gistId), {
-            method: 'PATCH',
-            headers: { ...getGistHeaders(gistToken), 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                files: {
-                    [GIST_STATE_FILE]: {
-                        content: JSON.stringify({ last_id: lastId, user_id: userId })
-                    }
-                }
-            })
-        });
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`GitHub API error: ${response.status} - ${errorText}`);
-        }
+        await updateGist(gistId, gistToken, { last_id: lastId, user_id: userId });
         log(`[state] Saved to Gist: ${lastId}`);
     } catch (e) {
         logError(`[state] CRITICAL: Could not save to Gist: ${e.message}`);
@@ -137,26 +147,85 @@ function buildMessage(username, tweet) {
     const tweetUrl = `https://x.com/${username}/status/${tweet.id}`;
     const text = extractTweetText(tweet);
 
-    return `${text}\n\nSource: ${tweetUrl}`;
+    return `${text}\n\nSource:\n${tweetUrl}`;
 }
 
-async function sendToTelegram({ bot, chatId, message, disablePreview = false, dryRun = false }) {
+function extractMediaUrls(tweet, mediaData) {
+    const mediaKeys = tweet.attachments?.media_keys || [];
+    if (mediaKeys.length === 0 || mediaData.length === 0) return [];
+
+    // Create lookup map for O(1) access
+    const mediaMap = new Map(mediaData.map(m => [m.media_key, m]));
+
+    return mediaKeys
+        .map(key => mediaMap.get(key))
+        .filter(media => media?.type === 'photo' && media.url)
+        .map(media => media.url);
+}
+
+async function sendTextMessageChunked(bot, chatId, message, disablePreview) {
+    const chunks = chunkTelegramMessage(message);
+    for (const part of chunks) {
+        await bot.api.sendMessage(chatId, part, {
+            disable_web_page_preview: disablePreview
+        });
+    }
+}
+
+async function sendToTelegram({ bot, chatId, message, mediaUrls = [], disablePreview = false, dryRun = false }) {
     if (dryRun) {
-        log(`[dry-run] Telegram message:\n${message}\n${'-'.repeat(40)}`);
+        log(`[dry-run] Telegram message:\n${message}`);
+        if (mediaUrls.length > 0) {
+            log(`[dry-run] Media URLs: ${mediaUrls.join(', ')}`);
+        }
+        log(`${'-'.repeat(40)}`);
         return;
     }
 
-    const chunks = chunkTelegramMessage(message);
-
-    for (const part of chunks) {
+    // Send photos with caption if available
+    if (mediaUrls.length > 0) {
         try {
-            await bot.api.sendMessage(chatId, part, {
-                disable_web_page_preview: disablePreview
-            });
+            if (mediaUrls.length === 1) {
+                await sendSinglePhoto(bot, chatId, message, mediaUrls[0]);
+            } else {
+                await sendMediaGroup(bot, chatId, message, mediaUrls, disablePreview);
+            }
+        } catch (e) {
+            logError(`[telegram] Error sending photo: ${e.message}`);
+            // Fallback to text only
+            await sendTextMessageChunked(bot, chatId, message, disablePreview);
+        }
+    } else {
+        // No media, send text only
+        try {
+            await sendTextMessageChunked(bot, chatId, message, disablePreview);
         } catch (e) {
             logError(`[telegram] ${e.message}`);
             throw e;
         }
+    }
+}
+
+async function sendSinglePhoto(bot, chatId, message, photoUrl) {
+    const caption = message.length <= TELEGRAM_CAPTION_MAX_LENGTH
+        ? message
+        : message.substring(0, TELEGRAM_CAPTION_MAX_LENGTH - 3) + '...';
+
+    await bot.api.sendPhoto(chatId, photoUrl, { caption });
+}
+
+async function sendMediaGroup(bot, chatId, message, mediaUrls, disablePreview) {
+    const mediaGroup = mediaUrls.slice(0, TELEGRAM_MEDIA_GROUP_MAX_SIZE).map((url, idx) => ({
+        type: 'photo',
+        media: url,
+        caption: idx === 0 && message.length <= TELEGRAM_CAPTION_MAX_LENGTH ? message : undefined
+    }));
+
+    await bot.api.sendMediaGroup(chatId, mediaGroup);
+
+    // If caption was too long or there are more than max media items, send text separately
+    if (message.length > TELEGRAM_CAPTION_MAX_LENGTH || mediaUrls.length > TELEGRAM_MEDIA_GROUP_MAX_SIZE) {
+        await sendTextMessageChunked(bot, chatId, message, disablePreview);
     }
 }
 
@@ -180,25 +249,29 @@ async function getUserId(client, username) {
 }
 
 async function fetchNewTweets(client, userId, sinceId, includeRetweets, includeReplies, maxPerRun) {
-    const exclude = [];
-    if (!includeRetweets) exclude.push('retweets');
-    if (!includeReplies) exclude.push('replies');
+    const exclude = [
+        ...(!includeRetweets ? ['retweets'] : []),
+        ...(!includeReplies ? ['replies'] : [])
+    ];
 
     const tweets = await client.v2.userTimeline(userId, {
         since_id: sinceId || undefined,
         max_results: Math.min(X_API_MAX_RESULTS, maxPerRun),
-        "tweet.fields": ["note_tweet"],
+        "tweet.fields": ["note_tweet", "attachments"],
+        "expansions": ["attachments.media_keys"],
+        "media.fields": ["url", "preview_image_url", "type"],
         exclude: exclude.length ? exclude : undefined
     });
 
     // tweets.data is the API response; .data within it is the array of tweet objects
     const data = tweets.data?.data || [];
+    const includes = tweets.data?.includes || {};
 
     // Sort oldest -> newest (API returns newest first)
     // Tweet IDs are numeric strings that sort lexicographically
     data.sort((a, b) => a.id.localeCompare(b.id));
 
-    return data;
+    return { tweets: data, media: includes.media || [] };
 }
 
 // -------------------------
@@ -210,17 +283,21 @@ async function getUserIdWithCache(client, username, state) {
     }
 
     log(`[info] Looking up user ID for @${username}`);
-    return await getUserId(client, username);
+    const userId = await getUserId(client, username);
+    // Cache the user_id immediately to avoid redundant lookups
+    await saveState(state.last_id, userId);
+    return userId;
 }
 
-async function processTweets(tweets, { username, tgToken, chatId, disablePreview, dryRun, userId }) {
+async function processTweets(tweets, mediaData, { username, tgToken, chatId, disablePreview, dryRun, userId }) {
     const bot = dryRun ? null : new Bot(tgToken);
 
     for (const tweet of tweets) {
         const msg = buildMessage(username, tweet);
-        await sendToTelegram({ bot, chatId, message: msg, disablePreview, dryRun });
+        const mediaUrls = extractMediaUrls(tweet, mediaData);
+        await sendToTelegram({ bot, chatId, message: msg, mediaUrls, disablePreview, dryRun });
         await saveState(tweet.id, userId);
-        log(`[posted] ${tweet.id}`);
+        log(`[posted] ${tweet.id}${mediaUrls.length > 0 ? ` (with ${mediaUrls.length} image(s))` : ''}`);
     }
 }
 
@@ -237,15 +314,10 @@ async function run(args) {
 
     // Use cached user_id from Gist if available, otherwise look up and cache
     const state = await loadState();
-    let userId = await getUserIdWithCache(client, username, state);
-
-    // Save user_id if it was just fetched
-    if (!state.user_id) {
-        await saveState(state.last_id, userId);
-    }
+    const userId = await getUserIdWithCache(client, username, state);
 
     try {
-        const tweets = await fetchNewTweets(client, userId, state.last_id, includeRetweets, includeReplies, maxPerRun);
+        const { tweets, media } = await fetchNewTweets(client, userId, state.last_id, includeRetweets, includeReplies, maxPerRun);
 
         if (tweets.length === 0) {
             log("[info] No new tweets.");
@@ -255,7 +327,7 @@ async function run(args) {
         log(`[info] Found ${tweets.length} new tweet(s)`);
 
         await processTweets(
-            tweets, { username, tgToken, chatId: tgChat, disablePreview, dryRun, userId }
+            tweets, media, { username, tgToken, chatId: tgChat, disablePreview, dryRun, userId }
         );
 
         log(`[done] Posted ${tweets.length} tweet(s)`);
