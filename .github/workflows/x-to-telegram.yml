@@ -100,8 +100,9 @@ jobs:
           node x_to_telegram.js --max-per-run "$MAX_PER_RUN" $DRY_RUN_FLAG $TWEET_ID_FLAG 2>&1 | tee run.log
 
           # Extract summary from logs
-          TWEET_COUNT=$(grep -c "\[posted\]" run.log || echo "0")
-          echo "tweets_posted=$TWEET_COUNT" >> $GITHUB_OUTPUT
+          TWEET_COUNT=$(grep -c "\[posted\]" run.log 2>/dev/null || true)
+          TWEET_COUNT=${TWEET_COUNT:-0}
+          echo "tweets_posted=${TWEET_COUNT}" >> $GITHUB_OUTPUT
         continue-on-error: false
 
       - name: Create job summary
@@ -116,20 +117,13 @@ jobs:
             echo "**Status:** ❌ Failed" >> $GITHUB_STEP_SUMMARY
           fi
 
-          echo "**Username:** @${{ secrets.X_USERNAME }}" >> $GITHUB_STEP_SUMMARY
           echo "**Tweets Posted:** ${{ steps.run-script.outputs.tweets_posted || '0' }}" >> $GITHUB_STEP_SUMMARY
-
-          if [ -n "${{ github.event.inputs.tweet-id }}" ]; then
-            echo "**Mode:** Specific tweet (ID: ${{ github.event.inputs.tweet-id }})" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "**Mode:** Timeline fetch" >> $GITHUB_STEP_SUMMARY
-          fi
 
           if [ "${{ github.event.inputs.dry-run }}" = "true" ]; then
             echo "**Dry Run:** Yes" >> $GITHUB_STEP_SUMMARY
           fi
 
-          echo "**Timestamp:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "**Timestamp:** $(TZ=Europe/Amsterdam date +'%d-%m-%Y %H:%M:%S %Z')" >> $GITHUB_STEP_SUMMARY
 
           if [ "${{ steps.run-script.outcome }}" != "success" ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
