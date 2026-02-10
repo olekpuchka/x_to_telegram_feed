@@ -159,7 +159,7 @@ function buildMessage(username, tweet, hasVideoPreview = false) {
 
     let message = tweetText;
     if (hasVideoPreview) {
-        message += '\n\n🎬 Video preview — click Source link below to watch 👇';
+        message += '\n\n🎬 Watch the full video via the Source link below 👇';
     }
     message += `\n\n🔗 Source:\n${tweetUrl}`;
 
