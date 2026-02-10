@@ -109,10 +109,8 @@ You can trigger the workflow manually with custom parameters:
 After each run, a summary is automatically created showing:
 - ✅ Job status (success/failure)
 - 📊 Number of tweets posted
-- 👤 Username being monitored
-- 🎯 Run mode (timeline fetch or specific tweet ID)
 - 🧪 Dry run status (if applicable)
-- ⏰ Execution timestamp
+- ⏰ Execution timestamp (Amsterdam timezone, EU format)
 - ⚠️ Error details (on failure)
 
 View summaries in the Actions tab under each workflow run.
@@ -167,7 +165,7 @@ Tweets are posted to Telegram in the following format:
 ```
 [Tweet text with t.co URLs removed]
 
-Source:
+🔗 Source:
 https://x.com/username/status/123456789
 ```
 
@@ -179,7 +177,7 @@ https://x.com/username/status/123456789
 
 **Tweets with videos:**
 - Video thumbnails are sent as photo previews (free Twitter API tier limitation - only `preview_image_url` available, not full video URLs)
-- Messages include a 🎬 indicator with a note to click the source link
+- Messages include: `🎬 Video preview — click Source link below 👇 to watch`
 - Mixed media: Sent as media group with photos and video thumbnails
 - Same caption handling as photos
 - Click the source link to watch the full video
