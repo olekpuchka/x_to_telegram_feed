@@ -12,7 +12,7 @@ Automatically forwards new posts from an X (Twitter) account to a Telegram chann
 - 🖼️ Forwards photos and video thumbnails (up to 10 media items per tweet)
 - ⚡ Rate-limit safe with graceful error handling
 - 🗄️ State persistence via GitHub Gist (no git history pollution)
-- 🔁 Runs on GitHub Actions every 30 minutes
+- 🔁 Runs on GitHub Actions every hour
 - 🎯 Configurable filters (retweets, replies)
 - 📝 Support for long-form tweets (note_tweet)
 - 🔗 Clean message formatting with automatic t.co link removal
@@ -81,7 +81,7 @@ Add these secrets to your repository at `Settings → Secrets and variables → 
 
 ### Automatic Runs
 
-The workflow runs automatically every 30 minutes with default settings:
+The workflow runs automatically every hour with default settings:
 - Processes up to 50 tweets per run
 - Posts to your configured Telegram channel
 
@@ -155,7 +155,7 @@ node x_to_telegram.js --tweet-id 1234567890 --dry-run
 3. **Format**: Formats tweets with text, removes t.co URLs, and extracts media
 4. **Post**: Forwards each tweet to Telegram (with photos if available)
 5. **Update**: Saves latest tweet ID and cached user ID to GitHub Gist
-6. **Repeat**: Runs every 30 minutes via GitHub Actions
+6. **Repeat**: Runs every hour via GitHub Actions
 
 ### Message Format
 

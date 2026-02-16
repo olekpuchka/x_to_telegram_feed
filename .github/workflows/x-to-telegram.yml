@@ -2,8 +2,8 @@ name: X → Telegram
 
 on:
   schedule:
-    # Every 30 minutes (UTC)
-    - cron: "*/30 * * * *"
+    # Every hour (UTC)
+    - cron: "0 * * * *"
   # Manual trigger from the Actions tab
   workflow_dispatch:
     inputs:
