@@ -428,9 +428,15 @@ async function run(args) {
         if (isRateLimitError) {
             log('[warning] X API rate limit reached — skipping this run.');
 
+            // Log diagnostic info to help debug rate limit issues
+            log(`[debug] Error code: ${e.code}, statusCode: ${e.statusCode}, response.status: ${e.response?.status}, data.status: ${e.data?.status}`);
+
             // Try to extract rate limit info from the error if available
             if (e.rateLimit) {
                 logRateLimit(e.rateLimit, 'Endpoint');
+                log(`[debug] Rate limit remaining: ${e.rateLimit.remaining}, limit: ${e.rateLimit.limit}`);
+            } else {
+                log('[debug] No rateLimit info available in error object');
             }
 
             return;
