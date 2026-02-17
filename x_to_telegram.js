@@ -273,8 +273,33 @@ function getClient() {
     return new TwitterApi(bearer);
 }
 
+function logRateLimit(rateLimitInfo, endpoint = 'API') {
+    if (!rateLimitInfo) return;
+
+    const { limit, remaining, reset } = rateLimitInfo;
+
+    if (limit !== undefined && remaining !== undefined && reset !== undefined) {
+        const resetDate = new Date(reset * 1000);
+        const now = new Date();
+        const minutesUntilReset = Math.ceil((resetDate - now) / 1000 / 60);
+
+        const percentage = Math.round((remaining / limit) * 100);
+        const status = remaining === 0 ? '❌' : percentage < 20 ? '⚠️' : '✅';
+
+        log(`[rate-limit] ${status} ${endpoint}: ${remaining}/${limit} requests remaining (${percentage}%) - resets in ${minutesUntilReset} min`);
+
+        if (remaining === 0) {
+            log(`[rate-limit] ⏰ Rate limit will reset at ${resetDate.toISOString()}`);
+        }
+    }
+}
+
 async function getUserId(client, username) {
     const user = await client.v2.userByUsername(username);
+
+    // Log rate limit for user lookup endpoint
+    logRateLimit(user.rateLimit, 'User lookup');
+
     if (!user.data) {
         throw new Error(`User @${username} not found.`);
     }
@@ -293,6 +318,9 @@ async function fetchNewTweets(client, userId, sinceId, includeRetweets, includeR
         exclude: exclude.length ? exclude : undefined
     });
 
+    // Log rate limit for timeline endpoint
+    logRateLimit(tweets.rateLimit, 'User timeline');
+
     // tweets.data is the API response; .data within it is the array of tweet objects
     const data = tweets.data?.data || [];
     const includes = tweets.data?.includes || {};
@@ -310,6 +338,9 @@ async function fetchSpecificTweet(client, tweetId) {
         'expansions': ['attachments.media_keys'],
         'media.fields': ['url', 'preview_image_url', 'type']
     });
+
+    // Log rate limit for single tweet endpoint
+    logRateLimit(response.rateLimit, 'Single tweet');
 
     const tweet = response.data;
     const includes = response.includes || {};
@@ -395,6 +426,12 @@ async function run(args) {
 
         if (isRateLimitError) {
             log('[warning] X API rate limit reached — skipping this run.');
+
+            // Try to extract rate limit info from the error if available
+            if (e.rateLimit) {
+                logRateLimit(e.rateLimit, 'Endpoint');
+            }
+
             return;
         }
 
