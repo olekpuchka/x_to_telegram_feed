@@ -422,27 +422,22 @@ async function run(args) {
 
         log(`[done] Posted ${tweets.length} tweet(s)`);
     } catch (e) {
-        // Handle X API rate limiting - prioritize actual rate limit data over status codes
-        // If we have rate limit info showing requests remaining, it's NOT a rate limit error
         const has429Status = e.code === 429 || e.statusCode === 429 || e.response?.status === 429 || e.data?.status === 429;
-        const hasRateLimitInfo = e.rateLimit !== undefined;
-        const isActuallyRateLimited = hasRateLimitInfo ? e.rateLimit.remaining === 0 : has429Status;
 
-        if (isActuallyRateLimited) {
-            log('[warning] X API rate limit reached — skipping this run.');
+        if (has429Status) {
+            // X API free tier has very low per-endpoint rate limits (e.g. 1 req/15min for user timeline)
+            // The rateLimit headers often reflect a different (app-level) bucket, so we can't trust them
+            // to determine if we're actually rate-limited. A 429 status code is authoritative.
+            log('[warning] X API rate limit reached (429) — skipping this run.');
 
-            // Try to extract rate limit info from the error if available
-            if (hasRateLimitInfo) {
-                logRateLimit(e.rateLimit, 'Endpoint');
+            if (e.rateLimit) {
+                const resetDate = new Date(e.rateLimit.reset * 1000);
+                const now = new Date();
+                const minutesUntilReset = Math.ceil((resetDate - now) / 1000 / 60);
+                log(`[rate-limit] Resets in ${minutesUntilReset} min`);
             }
 
             return;
-        }
-
-        // If we got a 429 but have requests remaining, something else is wrong - log and throw
-        if (has429Status && hasRateLimitInfo) {
-            logError(`[error] Received 429 error but ${e.rateLimit.remaining}/${e.rateLimit.limit} requests remaining - this may be an X API issue`);
-            logRateLimit(e.rateLimit, 'Endpoint');
         }
 
         throw e;
