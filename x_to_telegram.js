@@ -121,20 +121,23 @@ async function saveState(lastId, userId) {
 }
 
 function chunkTelegramMessage(text, chunkSize = TELEGRAM_MAX_MESSAGE_LENGTH) {
-    if (text.length <= chunkSize) {
-        return [text];
-    }
+    if (text.length <= chunkSize) return [text];
+
     const chunks = [];
     let start = 0;
+
     while (start < text.length) {
-        let end = Math.min(start + chunkSize, text.length);
+        const end = Math.min(start + chunkSize, text.length);
         let splitAt = text.lastIndexOf('\n', end);
+
         if (splitAt === -1 || splitAt <= start) {
             splitAt = end;
         }
+
         chunks.push(text.substring(start, splitAt));
         start = splitAt === end ? end : splitAt + 1;
     }
+
     return chunks;
 }
 
@@ -173,20 +176,17 @@ function extractMedia(tweet, mediaData) {
     // Create lookup map for O(1) access
     const mediaMap = new Map(mediaData.map(m => [m.media_key, m]));
 
-    return mediaKeys
-        .map(key => mediaMap.get(key))
-        .filter(media => {
-            if (!media) return false;
-            // Photos have url, videos only have preview_image_url in free tier
-            if (media.type === 'photo' && media.url) return true;
-            if (media.type === 'video' && media.preview_image_url) return true;
-            return false;
-        })
-        .map(media => ({
-            type: media.type === 'video' ? 'photo' : media.type, // Telegram expects 'photo' type for images
-            url: media.type === 'video' ? media.preview_image_url : media.url,
-            isVideoPreview: media.type === 'video'
-        }));
+    return mediaKeys.map(key => mediaMap.get(key)).filter(media => {
+        if (!media) return false;
+        // Photos have url, videos only have preview_image_url in free tier
+        if (media.type === 'photo' && media.url) return true;
+        if (media.type === 'video' && media.preview_image_url) return true;
+        return false;
+    }).map(media => ({
+        type: media.type === 'video' ? 'photo' : media.type, // Telegram expects 'photo' type for images
+        url: media.type === 'video' ? media.preview_image_url : media.url,
+        isVideoPreview: media.type === 'video'
+    }));
 }
 
 function generateCaption(message) {
@@ -207,11 +207,13 @@ async function sendTextMessageChunked(bot, chatId, message, disablePreview) {
 async function sendToTelegram({ bot, chatId, message, media = [], disablePreview = false, dryRun = false }) {
     if (dryRun) {
         log(`[dry-run] Telegram message:\n${message}`);
+
         if (media.length > 0) {
             const mediaInfo = media.map(m => `${m.type}: ${m.url}`).join(', ');
             log(`[dry-run] Media: ${mediaInfo}`);
         }
-        log(`${'-'.repeat(40)}`);
+
+        log('-'.repeat(40));
         return;
     }
 
@@ -280,17 +282,14 @@ async function getUserId(client, username) {
 }
 
 async function fetchNewTweets(client, userId, sinceId, includeRetweets, includeReplies, maxPerRun) {
-    const exclude = [
-        ...(!includeRetweets ? ['retweets'] : []),
-        ...(!includeReplies ? ['replies'] : [])
-    ];
+    const exclude = [...(!includeRetweets ? ['retweets'] : []), ...(!includeReplies ? ['replies'] : [])];
 
     const tweets = await client.v2.userTimeline(userId, {
         since_id: sinceId || undefined,
         max_results: Math.min(X_API_MAX_RESULTS, maxPerRun),
-        "tweet.fields": ["note_tweet", "attachments", "entities"],
-        "expansions": ["attachments.media_keys"],
-        "media.fields": ["url", "preview_image_url", "type"],
+        'tweet.fields': ['note_tweet', 'attachments', 'entities'],
+        'expansions': ['attachments.media_keys'],
+        'media.fields': ['url', 'preview_image_url', 'type'],
         exclude: exclude.length ? exclude : undefined
     });
 
@@ -307,9 +306,9 @@ async function fetchNewTweets(client, userId, sinceId, includeRetweets, includeR
 
 async function fetchSpecificTweet(client, tweetId) {
     const response = await client.v2.singleTweet(tweetId, {
-        "tweet.fields": ["note_tweet", "attachments", "entities"],
-        "expansions": ["attachments.media_keys"],
-        "media.fields": ["url", "preview_image_url", "type"]
+        'tweet.fields': ['note_tweet', 'attachments', 'entities'],
+        'expansions': ['attachments.media_keys'],
+        'media.fields': ['url', 'preview_image_url', 'type']
     });
 
     const tweet = response.data;
@@ -332,6 +331,7 @@ async function getUserIdWithCache(client, username, state) {
 
     log(`[info] Looking up user ID for @${username}`);
     const userId = await getUserId(client, username);
+
     // Cache the user_id immediately to avoid redundant lookups
     await saveState(state.last_id, userId);
     return userId;
@@ -351,6 +351,7 @@ async function processTweets(tweets, mediaData, { username, tgToken, chatId, dis
         const mediaInfo = media.length > 0
             ? ` (with ${media.length} media: ${media.map(m => m.isVideoPreview ? 'video preview' : m.type).join(', ')})`
             : '';
+
         log(`[posted] ${tweet.id}${mediaInfo}`);
     }
 }
@@ -361,16 +362,14 @@ async function run(args) {
     const tgChat = process.env.TELEGRAM_CHAT_ID;
 
     if (!tgToken || !tgChat) {
-        throw new Error("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID.");
+        throw new Error('Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID.');
     }
 
     const client = getClient();
-
-    // Use cached user_id from Gist if available, otherwise look up and cache
     const state = await loadState();
-    const userId = await getUserIdWithCache(client, username, state);
 
     try {
+        const userId = await getUserIdWithCache(client, username, state);
         let tweets, media;
 
         if (tweetId) {
@@ -381,23 +380,24 @@ async function run(args) {
         }
 
         if (tweets.length === 0) {
-            log("[info] No new tweets.");
+            log('[info] No new tweets.');
             return;
         }
 
         log(`[info] Found ${tweets.length} new tweet(s)`);
 
-        await processTweets(
-            tweets, media, { username, tgToken, chatId: tgChat, disablePreview, dryRun, userId }
-        );
+        await processTweets(tweets, media, { username, tgToken, chatId: tgChat, disablePreview, dryRun, userId });
 
         log(`[done] Posted ${tweets.length} tweet(s)`);
     } catch (e) {
-        // Handle X API rate limiting
-        if (e.code === 429 || e.statusCode === 429 || e.response?.status === 429) {
-            log("[warning] X API rate limit reached — skipping this run.");
+        // Handle X API rate limiting - check multiple error formats
+        const isRateLimitError = e.code === 429 || e.statusCode === 429 || e.response?.status === 429 || e.rateLimit || e.data?.status === 429;
+
+        if (isRateLimitError) {
+            log('[warning] X API rate limit reached — skipping this run.');
             return;
         }
+
         throw e;
     }
 }
