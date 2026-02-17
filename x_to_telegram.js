@@ -422,24 +422,27 @@ async function run(args) {
 
         log(`[done] Posted ${tweets.length} tweet(s)`);
     } catch (e) {
-        // Handle X API rate limiting - check multiple error formats
-        const isRateLimitError = e.code === 429 || e.statusCode === 429 || e.response?.status === 429 || e.rateLimit?.remaining === 0 || e.data?.status === 429;
+        // Handle X API rate limiting - prioritize actual rate limit data over status codes
+        // If we have rate limit info showing requests remaining, it's NOT a rate limit error
+        const has429Status = e.code === 429 || e.statusCode === 429 || e.response?.status === 429 || e.data?.status === 429;
+        const hasRateLimitInfo = e.rateLimit !== undefined;
+        const isActuallyRateLimited = hasRateLimitInfo ? e.rateLimit.remaining === 0 : has429Status;
 
-        if (isRateLimitError) {
+        if (isActuallyRateLimited) {
             log('[warning] X API rate limit reached — skipping this run.');
 
-            // Log diagnostic info to help debug rate limit issues
-            log(`[debug] Error code: ${e.code}, statusCode: ${e.statusCode}, response.status: ${e.response?.status}, data.status: ${e.data?.status}`);
-
             // Try to extract rate limit info from the error if available
-            if (e.rateLimit) {
+            if (hasRateLimitInfo) {
                 logRateLimit(e.rateLimit, 'Endpoint');
-                log(`[debug] Rate limit remaining: ${e.rateLimit.remaining}, limit: ${e.rateLimit.limit}`);
-            } else {
-                log('[debug] No rateLimit info available in error object');
             }
 
             return;
+        }
+
+        // If we got a 429 but have requests remaining, something else is wrong - log and throw
+        if (has429Status && hasRateLimitInfo) {
+            logError(`[error] Received 429 error but ${e.rateLimit.remaining}/${e.rateLimit.limit} requests remaining - this may be an X API issue`);
+            logRateLimit(e.rateLimit, 'Endpoint');
         }
 
         throw e;
