@@ -423,7 +423,7 @@ async function run(args) {
         log(`[done] Posted ${tweets.length} tweet(s)`);
     } catch (e) {
         // Handle X API rate limiting - check multiple error formats
-        const isRateLimitError = e.code === 429 || e.statusCode === 429 || e.response?.status === 429 || e.rateLimit || e.data?.status === 429;
+        const isRateLimitError = e.code === 429 || e.statusCode === 429 || e.response?.status === 429 || e.rateLimit?.remaining === 0 || e.data?.status === 429;
 
         if (isRateLimitError) {
             log('[warning] X API rate limit reached — skipping this run.');
