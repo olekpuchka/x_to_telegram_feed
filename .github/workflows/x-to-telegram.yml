@@ -102,7 +102,10 @@ jobs:
           # Extract summary from logs
           TWEET_COUNT=$(grep -c "\[posted\]" run.log 2>/dev/null || true)
           TWEET_COUNT=${TWEET_COUNT:-0}
+          RATE_LIMITED=$(grep -c "\[warning\].*429" run.log 2>/dev/null || true)
+          RATE_LIMITED=${RATE_LIMITED:-0}
           echo "tweets_posted=${TWEET_COUNT}" >> $GITHUB_OUTPUT
+          echo "rate_limited=${RATE_LIMITED}" >> $GITHUB_OUTPUT
         continue-on-error: false
 
       - name: Create job summary
@@ -111,7 +114,9 @@ jobs:
           echo "## X → Telegram Feed Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          if [ "${{ steps.run-script.outcome }}" = "success" ]; then
+          if [ "${{ steps.run-script.outputs.rate_limited }}" != "0" ]; then
+            echo "**Status:** ⏳ Rate Limited (429)" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ steps.run-script.outcome }}" = "success" ]; then
             echo "**Status:** ✅ Success" >> $GITHUB_STEP_SUMMARY
           else
             echo "**Status:** ❌ Failed" >> $GITHUB_STEP_SUMMARY
@@ -124,6 +129,17 @@ jobs:
           fi
 
           echo "**Timestamp:** $(TZ=Europe/Amsterdam date +'%d-%m-%Y %H:%M:%S %Z')" >> $GITHUB_STEP_SUMMARY
+
+          # Rate limit details
+          if [ "${{ steps.run-script.outputs.rate_limited }}" != "0" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### ⏳ Rate Limit Details" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -E "\[warning\]|\[rate-limit\]" run.log >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No rate limit details available"
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> **Tip:** The X API free tier has strict per-endpoint limits. If this keeps happening, check your [X Developer Portal](https://developer.x.com/en/portal/dashboard) for app status and tier details." >> $GITHUB_STEP_SUMMARY
+          fi
 
           if [ "${{ steps.run-script.outcome }}" != "success" ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
