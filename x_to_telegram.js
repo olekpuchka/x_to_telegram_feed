@@ -273,33 +273,8 @@ function getClient() {
     return new TwitterApi(bearer);
 }
 
-function logRateLimit(rateLimitInfo, endpoint = 'API') {
-    if (!rateLimitInfo) return;
-
-    const { limit, remaining, reset } = rateLimitInfo;
-
-    if (limit !== undefined && remaining !== undefined && reset !== undefined) {
-        const resetDate = new Date(reset * 1000);
-        const now = new Date();
-        const minutesUntilReset = Math.ceil((resetDate - now) / 1000 / 60);
-
-        const percentage = Math.round((remaining / limit) * 100);
-        const status = remaining === 0 ? '❌' : percentage < 20 ? '⚠️' : '✅';
-
-        log(`[rate-limit] ${status} ${endpoint}: ${remaining}/${limit} requests remaining (${percentage}%) - resets in ${minutesUntilReset} min`);
-
-        if (remaining === 0) {
-            const resetTimeAmsterdam = resetDate.toLocaleString('en-GB', { timeZone: 'Europe/Amsterdam', dateStyle: 'short', timeStyle: 'long' });
-            log(`[rate-limit] ⏰ Rate limit will reset at ${resetTimeAmsterdam} (Amsterdam)`);
-        }
-    }
-}
-
 async function getUserId(client, username) {
     const user = await client.v2.userByUsername(username);
-
-    // Log rate limit for user lookup endpoint
-    logRateLimit(user.rateLimit, 'User lookup');
 
     if (!user.data) {
         throw new Error(`User @${username} not found.`);
@@ -319,9 +294,6 @@ async function fetchNewTweets(client, userId, sinceId, includeRetweets, includeR
         exclude: exclude.length ? exclude : undefined
     });
 
-    // Log rate limit for timeline endpoint
-    logRateLimit(tweets.rateLimit, 'User timeline');
-
     // tweets.data is the API response; .data within it is the array of tweet objects
     const data = tweets.data?.data || [];
     const includes = tweets.data?.includes || {};
@@ -339,9 +311,6 @@ async function fetchSpecificTweet(client, tweetId) {
         'expansions': ['attachments.media_keys'],
         'media.fields': ['url', 'preview_image_url', 'type']
     });
-
-    // Log rate limit for single tweet endpoint
-    logRateLimit(response.rateLimit, 'Single tweet');
 
     const tweet = response.data;
     const includes = response.includes || {};
@@ -425,18 +394,7 @@ async function run(args) {
         const has429Status = e.code === 429 || e.statusCode === 429 || e.response?.status === 429 || e.data?.status === 429;
 
         if (has429Status) {
-            // X API free tier has very low per-endpoint rate limits (e.g. 1 req/15min for user timeline)
-            // The rateLimit headers often reflect a different (app-level) bucket, so we can't trust them
-            // to determine if we're actually rate-limited. A 429 status code is authoritative.
-            log('[warning] X API rate limit reached (429) — skipping this run.');
-
-            if (e.rateLimit) {
-                const resetDate = new Date(e.rateLimit.reset * 1000);
-                const now = new Date();
-                const minutesUntilReset = Math.ceil((resetDate - now) / 1000 / 60);
-                log(`[rate-limit] Resets in ${minutesUntilReset} min`);
-            }
-
+            log('[warning] X API rate limit reached — skipping this run.');
             return;
         }
 

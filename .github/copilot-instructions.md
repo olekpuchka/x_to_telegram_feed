@@ -25,7 +25,7 @@ Everything lives in [`x_to_telegram.js`](../x_to_telegram.js) — single-file ar
 1. **Constants** — Telegram/X API limits
 2. **Utilities** — Logging, Gist state CRUD, message chunking, text/media extraction
 3. **Telegram sending** — `sendToTelegram` orchestrator with media fallback to text-only
-4. **X API helpers** — Client setup, rate limit logging, tweet fetching
+4. **X API helpers** — Client setup, tweet fetching
 5. **Core run** — User ID caching, tweet processing loop, 429 handling
 6. **CLI/main** — `yargs` options, entry-point guard via `import.meta.url`
 
@@ -54,9 +54,9 @@ All required — set via GitHub Secrets:
 
 ## Rate Limiting
 
-- X API free tier has strict per-endpoint limits (~1 req/15min for user timeline)
-- 429 errors are caught and treated as **non-fatal** (log warning, return early)
-- The `rateLimit` headers in errors may reflect app-level buckets, not endpoint-level — trust the 429 status code
+- X API free tier has strict per-endpoint limits (~1-5 req/15min)
+- 429 errors are caught and treated as **non-fatal** (log warning, skip run)
+- No rate limit logging on success (headers show app-level buckets, not endpoint limits)
 - Workflow runs hourly with `cancel-in-progress: true` concurrency
 
 ## CI/CD
@@ -64,6 +64,6 @@ All required — set via GitHub Secrets:
 Workflow: [`.github/workflows/x-to-telegram.yml`](workflows/x-to-telegram.yml)
 
 - **Schedule**: Hourly cron + manual `workflow_dispatch`
-- **Job summary**: Shows status (success/rate-limited/failed), tweet count, timestamp (Amsterdam TZ)
+- **Job summary**: One-line status with tweet count (e.g., "✅ 3 tweets posted")
 - **Timeout**: 5 minutes — script exits fast on rate limits
 - **Secrets validation**: All 6 env vars are checked before the script runs

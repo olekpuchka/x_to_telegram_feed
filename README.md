@@ -106,14 +106,12 @@ You can trigger the workflow manually with custom parameters:
 
 ### Job Summaries
 
-After each run, a summary is automatically created showing:
-- ✅ Job status (success/failure)
-- 📊 Number of tweets posted
-- 🧪 Dry run status (if applicable)
-- ⏰ Execution timestamp (Amsterdam timezone, EU format)
-- ⚠️ Error details (on failure)
+After each run, a concise summary shows:
+- ✅ Success: "✅ 3 tweets posted"
+- ⏳ Rate limited: "⏳ Rate limited — 0 tweets posted"
+- ❌ Failed: "❌ Failed"
 
-View summaries in the Actions tab under each workflow run.
+Detailed logs are available in the workflow run for debugging.
 
 ## Configuration
 
@@ -200,10 +198,10 @@ https://x.com/username/status/123456789
 
 ### Rate Limits
 
-The script handles X API rate limits gracefully with improved error detection:
-- Catches rate limit errors from multiple API response formats
-- Returns early on 429 errors
-- Logs warning and continues on next run
+The script handles X API rate limits gracefully:
+- Free tier: ~1-5 requests per 15 minutes per endpoint
+- 429 errors are caught and handled as non-fatal
+- Logs warning and skips the run (resumes automatically on next schedule)
 - GitHub Actions timeout: 5 minutes
 
 ### No New Tweets
