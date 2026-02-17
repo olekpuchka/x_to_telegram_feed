@@ -289,7 +289,8 @@ function logRateLimit(rateLimitInfo, endpoint = 'API') {
         log(`[rate-limit] ${status} ${endpoint}: ${remaining}/${limit} requests remaining (${percentage}%) - resets in ${minutesUntilReset} min`);
 
         if (remaining === 0) {
-            log(`[rate-limit] ⏰ Rate limit will reset at ${resetDate.toISOString()}`);
+            const resetTimeAmsterdam = resetDate.toLocaleString('en-GB', { timeZone: 'Europe/Amsterdam', dateStyle: 'short', timeStyle: 'long' });
+            log(`[rate-limit] ⏰ Rate limit will reset at ${resetTimeAmsterdam} (Amsterdam)`);
         }
     }
 }
