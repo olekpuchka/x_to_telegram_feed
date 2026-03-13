@@ -6,7 +6,7 @@ Single-file Node.js bot that polls an X (Twitter) account for new posts and forw
 
 ## Tech Stack
 
-- **Runtime**: Node.js >= 20, ESM modules (`"type": "module"`)
+- **Runtime**: Node.js >= 24, ESM modules (`"type": "module"`)
 - **Dependencies**: `twitter-api-v2` (X API v2), `grammy` (Telegram Bot), `yargs` (CLI)
 - **No test framework** — use `--dry-run` mode for manual testing
 
@@ -31,7 +31,7 @@ Everything lives in [`x_to_telegram.js`](../x_to_telegram.js) — single-file ar
 
 ## Code Conventions
 
-- **Native `fetch()`** for HTTP (no axios/node-fetch) — Node 20 built-in
+- **Native `fetch()`** for HTTP (no axios/node-fetch) — Node 24+ built-in
 - **Timestamped logging**: Always use `log()` / `logError()`, never raw `console.log`
 - **State is crash-safe**: `saveState()` is called after each individual tweet is posted, not in batch
 - **User ID caching**: Stored in Gist state to avoid burning rate-limited API calls
