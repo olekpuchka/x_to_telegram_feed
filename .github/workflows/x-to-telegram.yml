@@ -1,0 +1,105 @@
+name: X → Telegram
+
+on:
+  schedule:
+    # Every hour (UTC)
+    - cron: "0 * * * *"
+  # Manual trigger from the Actions tab (uses the defaults baked into the script)
+  workflow_dispatch:
+
+# Avoid overlapping runs if one is still in progress
+concurrency:
+  group: x-to-telegram
+  cancel-in-progress: true
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+    # Keep the runner from idling too long; the script now exits fast on 429s
+    timeout-minutes: 5
+
+    permissions:
+      contents: read
+      actions: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Validate required secrets
+        run: |
+          if [ -z "${{ secrets.X_BEARER_TOKEN }}" ]; then
+            echo "❌ Error: X_BEARER_TOKEN secret is not set"
+            exit 1
+          fi
+          if [ -z "${{ secrets.X_USERNAME }}" ]; then
+            echo "❌ Error: X_USERNAME secret is not set"
+            exit 1
+          fi
+          if [ -z "${{ secrets.TELEGRAM_BOT_TOKEN }}" ]; then
+            echo "❌ Error: TELEGRAM_BOT_TOKEN secret is not set"
+            exit 1
+          fi
+          if [ -z "${{ secrets.TELEGRAM_CHAT_ID }}" ]; then
+            echo "❌ Error: TELEGRAM_CHAT_ID secret is not set"
+            exit 1
+          fi
+          if [ -z "${{ secrets.STATE_GIST_ID }}" ]; then
+            echo "❌ Error: STATE_GIST_ID secret is not set"
+            exit 1
+          fi
+          if [ -z "${{ secrets.GIST_TOKEN }}" ]; then
+            echo "❌ Error: GIST_TOKEN secret is not set"
+            exit 1
+          fi
+          echo "✅ All required secrets are configured"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Fetch and post tweets
+        id: run-script
+        env:
+          X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
+          X_USERNAME: ${{ secrets.X_USERNAME }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          STATE_GIST_ID: ${{ secrets.STATE_GIST_ID }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+        run: |
+          set -o pipefail
+          node x_to_telegram.js 2>&1 | tee run.log
+
+          # Extract summary from logs
+          TWEET_COUNT=$(grep -c "\[posted\]" run.log 2>/dev/null || true)
+          TWEET_COUNT=${TWEET_COUNT:-0}
+          RATE_LIMITED=$(grep -c "\[warning\].*429" run.log 2>/dev/null || true)
+          RATE_LIMITED=${RATE_LIMITED:-0}
+          echo "tweets_posted=${TWEET_COUNT}" >> $GITHUB_OUTPUT
+          echo "rate_limited=${RATE_LIMITED}" >> $GITHUB_OUTPUT
+        continue-on-error: false
+
+      - name: Re-enable this workflow
+        if: always()
+        run: gh workflow enable x-to-telegram.yml --repo ${{ github.repository }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create job summary
+        if: always()
+        run: |
+          echo "## X → Telegram" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.run-script.outputs.rate_limited }}" != "0" ]; then
+            echo "⏳ Rate limited — ${{ steps.run-script.outputs.tweets_posted || '0' }} tweets posted" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ steps.run-script.outcome }}" = "success" ]; then
+            echo "✅ ${{ steps.run-script.outputs.tweets_posted || '0' }} tweets posted" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Failed" >> $GITHUB_STEP_SUMMARY
+          fi

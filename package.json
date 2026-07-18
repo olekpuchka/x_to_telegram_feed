@@ -1,0 +1,35 @@
+{
+  "name": "x_to_telegram_feed",
+  "version": "1.0.0",
+  "description": "Automatically forwards new posts from an X (Twitter) account to a Telegram channel",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/olekpuchka/x_to_telegram_feed.git"
+  },
+  "type": "module",
+  "main": "x_to_telegram.js",
+  "bin": {
+    "x-to-telegram": "./x_to_telegram.js"
+  },
+  "scripts": {
+    "start": "node x_to_telegram.js"
+  },
+  "keywords": [
+    "twitter",
+    "x",
+    "telegram",
+    "bot",
+    "automation",
+    "feed"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "grammy": "^1.45.1",
+    "twitter-api-v2": "^1.29.0",
+    "yargs": "^18.0.0"
+  }
+}
